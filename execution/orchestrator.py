@@ -260,8 +260,7 @@ Always be helpful, professional, and work within your defined boundaries."""
                 return {
                     "type": "tool_result",
                     "tool_use_id": tool_use_id,
-                    "content": json.dumps(output_data),
-                    "tool_name": tool_name
+                    "content": json.dumps(output_data)
                 }
             else:
                 # Error
@@ -272,7 +271,6 @@ Always be helpful, professional, and work within your defined boundaries."""
                         "error": result.stderr,
                         "stdout": result.stdout
                     }),
-                    "tool_name": tool_name,
                     "is_error": True
                 }
 
@@ -281,7 +279,6 @@ Always be helpful, professional, and work within your defined boundaries."""
                 "type": "tool_result",
                 "tool_use_id": tool_use_id,
                 "content": json.dumps({"error": "Tool execution timeout (60s)"}),
-                "tool_name": tool_name,
                 "is_error": True
             }
         except Exception as e:
@@ -289,7 +286,6 @@ Always be helpful, professional, and work within your defined boundaries."""
                 "type": "tool_result",
                 "tool_use_id": tool_use_id,
                 "content": json.dumps({"error": str(e)}),
-                "tool_name": tool_name,
                 "is_error": True
             }
 
