@@ -1,0 +1,43 @@
+# Environment variables and API keys
+.env
+
+# Google OAuth credentials
+credentials.json
+token.json
+
+# Intermediate/temporary files
+.tmp/
+*.tmp
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+.venv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# Backup files
+*.backup.md

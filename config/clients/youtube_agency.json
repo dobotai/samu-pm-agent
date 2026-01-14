@@ -1,0 +1,455 @@
+{
+  "client_name": "youtube_agency",
+  "agent_type": "project_management",
+  "system_prompt": "You are a project management assistant for a YouTube content agency. Help manage video projects, track content schedules, coordinate team tasks, and access information from Slack, Google Drive, and Airtable. Be professional, proactive, and detail-oriented. Always confirm before making significant changes to project data.",
+
+  "available_tools": [
+    {
+      "name": "slack_list_channels",
+      "script": "execution/tools/slack_read.py",
+      "description": "List all Slack channels in the workspace",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["list_channels"],
+            "default": "list_channels"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "slack_read_messages",
+      "script": "execution/tools/slack_read.py",
+      "description": "Read recent messages from a specific Slack channel",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["read_messages"],
+            "default": "read_messages"
+          },
+          "channel_id": {
+            "type": "string",
+            "description": "The Slack channel ID to read messages from"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Number of messages to retrieve (default: 50)",
+            "default": 50
+          }
+        },
+        "required": ["channel_id"]
+      }
+    },
+    {
+      "name": "slack_search_messages",
+      "script": "execution/tools/slack_read.py",
+      "description": "Search for messages across all Slack channels",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["search_messages"],
+            "default": "search_messages"
+          },
+          "query": {
+            "type": "string",
+            "description": "Search query to find messages"
+          }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "slack_list_users",
+      "script": "execution/tools/slack_read.py",
+      "description": "List all users in the Slack workspace",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["list_users"],
+            "default": "list_users"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "slack_send_message",
+      "script": "execution/tools/slack_write.py",
+      "description": "Send a message to a Slack channel",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["send_message"],
+            "default": "send_message"
+          },
+          "channel": {
+            "type": "string",
+            "description": "Channel ID or channel name (e.g., #general)"
+          },
+          "message": {
+            "type": "string",
+            "description": "The message text to send"
+          }
+        },
+        "required": ["channel", "message"]
+      }
+    },
+    {
+      "name": "slack_send_dm",
+      "script": "execution/tools/slack_write.py",
+      "description": "Send a direct message to a Slack user by email or user ID",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["send_dm"],
+            "default": "send_dm"
+          },
+          "user_identifier": {
+            "type": "string",
+            "description": "User email (e.g., anna@company.com) or Slack user ID"
+          },
+          "message": {
+            "type": "string",
+            "description": "The message text to send"
+          }
+        },
+        "required": ["user_identifier", "message"]
+      }
+    },
+    {
+      "name": "slack_reply_to_thread",
+      "script": "execution/tools/slack_write.py",
+      "description": "Reply to a message thread in Slack",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["reply_to_thread"],
+            "default": "reply_to_thread"
+          },
+          "channel": {
+            "type": "string",
+            "description": "Channel ID where the thread exists"
+          },
+          "thread_ts": {
+            "type": "string",
+            "description": "Timestamp of the parent message"
+          },
+          "message": {
+            "type": "string",
+            "description": "The reply text to send"
+          }
+        },
+        "required": ["channel", "thread_ts", "message"]
+      }
+    },
+    {
+      "name": "slack_add_reaction",
+      "script": "execution/tools/slack_write.py",
+      "description": "Add an emoji reaction to a Slack message",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["add_reaction"],
+            "default": "add_reaction"
+          },
+          "channel": {
+            "type": "string",
+            "description": "Channel ID where the message exists"
+          },
+          "timestamp": {
+            "type": "string",
+            "description": "Timestamp of the message to react to"
+          },
+          "emoji": {
+            "type": "string",
+            "description": "Emoji name (e.g., thumbsup, eyes, checkmark)"
+          }
+        },
+        "required": ["channel", "timestamp", "emoji"]
+      }
+    },
+    {
+      "name": "drive_list_files",
+      "script": "execution/tools/drive_read.py",
+      "description": "List files and folders from Google Drive",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["list_files"],
+            "default": "list_files"
+          },
+          "folder_id": {
+            "type": "string",
+            "description": "Optional: Specific folder ID to list files from"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Number of files to retrieve (default: 100)",
+            "default": 100
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "drive_search_files",
+      "script": "execution/tools/drive_read.py",
+      "description": "Search for files in Google Drive by name",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["search_files"],
+            "default": "search_files"
+          },
+          "query": {
+            "type": "string",
+            "description": "Search query to find files"
+          }
+        },
+        "required": ["query"]
+      }
+    },
+    {
+      "name": "drive_get_file_info",
+      "script": "execution/tools/drive_read.py",
+      "description": "Get detailed information about a specific Drive file",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["get_file_info"],
+            "default": "get_file_info"
+          },
+          "file_id": {
+            "type": "string",
+            "description": "The Google Drive file ID"
+          }
+        },
+        "required": ["file_id"]
+      }
+    },
+    {
+      "name": "drive_list_recent",
+      "script": "execution/tools/drive_read.py",
+      "description": "List recently modified files in Google Drive",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["list_recent"],
+            "default": "list_recent"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Number of files to retrieve (default: 20)",
+            "default": 20
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "airtable_list_records",
+      "script": "execution/tools/airtable_read.py",
+      "description": "List records from an Airtable table",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["list_records"],
+            "default": "list_records"
+          },
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable base ID"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The table name within the base"
+          },
+          "limit": {
+            "type": "number",
+            "description": "Number of records to retrieve (default: 100)",
+            "default": 100
+          }
+        },
+        "required": ["base_id", "table_name"]
+      }
+    },
+    {
+      "name": "airtable_get_record",
+      "script": "execution/tools/airtable_read.py",
+      "description": "Get a specific record from Airtable by ID",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["get_record"],
+            "default": "get_record"
+          },
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable base ID"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The table name within the base"
+          },
+          "record_id": {
+            "type": "string",
+            "description": "The record ID to retrieve"
+          }
+        },
+        "required": ["base_id", "table_name", "record_id"]
+      }
+    },
+    {
+      "name": "airtable_search_records",
+      "script": "execution/tools/airtable_read.py",
+      "description": "Search for records in an Airtable table",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["search_records"],
+            "default": "search_records"
+          },
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable base ID"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The table name within the base"
+          },
+          "field_name": {
+            "type": "string",
+            "description": "The field name to search in"
+          },
+          "search_value": {
+            "type": "string",
+            "description": "The value to search for"
+          }
+        },
+        "required": ["base_id", "table_name", "field_name", "search_value"]
+      }
+    },
+    {
+      "name": "airtable_filter_records",
+      "script": "execution/tools/airtable_read.py",
+      "description": "Filter records using an Airtable formula",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["filter_records"],
+            "default": "filter_records"
+          },
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable base ID"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The table name within the base"
+          },
+          "filter_formula": {
+            "type": "string",
+            "description": "Airtable filter formula (e.g., '{Status} = \"In Progress\"')"
+          }
+        },
+        "required": ["base_id", "table_name", "filter_formula"]
+      }
+    },
+    {
+      "name": "airtable_list_bases",
+      "script": "execution/tools/airtable_read.py",
+      "description": "List all available Airtable bases",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["list_bases"],
+            "default": "list_bases"
+          }
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "airtable_get_table_schema",
+      "script": "execution/tools/airtable_read.py",
+      "description": "Get the schema (field names) for an Airtable table",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {
+            "type": "string",
+            "enum": ["get_table_schema"],
+            "default": "get_table_schema"
+          },
+          "base_id": {
+            "type": "string",
+            "description": "The Airtable base ID"
+          },
+          "table_name": {
+            "type": "string",
+            "description": "The table name within the base"
+          }
+        },
+        "required": ["base_id", "table_name"]
+      }
+    }
+  ],
+
+  "constraints": [
+    "Can read unlimited data from Slack, Google Drive, and Airtable",
+    "Can send individual Slack messages, DMs, and reactions",
+    "APPROVAL REQUIRED for bulk operations: Creating/updating/deleting more than 5 Airtable records at once",
+    "APPROVAL REQUIRED for deleting more than 3 records at once",
+    "APPROVAL REQUIRED for any operation that could affect multiple client channels",
+    "Always confirm before sending messages to clients or external team members",
+    "Always explain what action you're about to take before doing it",
+    "Be professional, helpful, and proactive in all communications",
+    "Explain limitations when functionality is not available",
+    "Recommend new tools when clients request unavailable features",
+    "Respect data privacy - do not share sensitive information inappropriately",
+    "Never send spam or unsolicited messages",
+    "Never delete data without explicit confirmation",
+    "Log all approval requests to .tmp/logs/approval_requests.jsonl"
+  ],
+
+  "output_destinations": {
+    "reports_sheet": "",
+    "notifications_email": "",
+    "slack_webhook": ""
+  }
+}

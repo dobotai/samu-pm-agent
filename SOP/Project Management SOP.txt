@@ -1,0 +1,552 @@
+﻿Structure
+1. Moving all videos in Airtable
+2. Checking progress with editors
+3. Sending videos to clients for review
+4. Giving client revisions to editors
+5. Scheduling client videos
+6. Getting editor payment info
+7. Putting editor invoices in tracking doc
+
+
+
+
+Automation ideas:
+* “Ideas are needed for CLIENT” slack ping 5 days before client new payment
+* Different Airtable views
+* New video assigned to Editor slack ping
+* ping Samu when a vid needs social post writing (automation)
+* automated daily checking with all editors (automation)
+
+
+Tasks for Samu:
+* Add Simon to all editor slack channels
+* Add Simon to all client slack channels
+* Check in/out guide
+* Comprehensive client info doc
+* Deliverables
+* Payment date
+* 5 last tabs of this doc
+* Get client YT channels send invite to admin@ks-media.co
+
+
+
+
+
+
+Daily Tasks
+Daily tasks of a project manager:
+1. Quality checking videos
+   1. This is priority and you should do it as fast as possible
+2. Monitoring editor Slack channels
+   1. If they need anything for the videos, provide it to them
+   2. If they have a question about a video that you can answer, answer it
+   3. If they fail to check in, you give them a nudge
+   4. If they finish a video, you can quality check that
+   5. Once you do a quality check, you let them know that
+   6. And just overall, monitor these Slack channels and make sure everything is going well
+3. Monitoring client Slack channels
+   1. If they record a video, put it up on Airtable
+   2. If they have a question you think you can answer, message me first the response you want to give them so I can approve
+   3. And just overall, monitor these channels but be careful with replies and always check in with me before writing anything in these channels
+4. Managing the videos in Airtable
+   1. Checking which projects are close to deadline and sending extra check ins to the editors to make sure they’re on track
+   2. Checking if there are videos to review/post/etc.
+   3. Making sure videos are set to the right “Editing Status”
+      1. Example: when a client gave revs for a video, make the Editing Status on that video “Client Sent Revisions” and notify the editor on Slack
+5. Scheduling videos on Youtube
+   1. When there’s a video ready to post, schedule it on the client’s channel
+6. Communicating with Samu
+   1. Send a check in Slack message when you start working
+   2. Send a check out Slack message when you log off from work
+   3. Send a Slack message to Samu after each main task you complete
+      1. Example: if client recorded a video and put that video up on Airtable, let Samu know that you did that
+      2. You MUST communicate even the small details
+   4. Complete tasks that Samu sends
+      1. Samu might send you tasks during the day to complete
+PM Routine
+When logging in:
+1. Check “project-manager” Slack channel
+   1. Send msg that you started
+   2. See if there’s anything urgent Samu sent
+2. Check Airtable
+   1. See how many videos need to be QCd
+   2. See how many videos need to be scheduled
+3. Check all Slack channels
+   1. See if there’s anyone waiting for your input (Assignments, Qs, etc.)
+   2. See if clients are waiting for any response
+   3. See if there’s anything missed
+   4. See if there’s anything you can help with
+   5. See if there are any additional tasks for you
+   6. See if any editors didn’t reply for their check-in
+4. Use the “remind me” feature in Slack for everything
+5. Create a priority list
+   1. Put all the tasks you can see in your list and create priorities
+   2. Example
+      1. Tom QC
+      2. Christian QC
+      3. Adam scheduling
+      4. Following up with Taylor about thumbnail pics
+      5. Onboarding new editor
+6. Start hammering
+   1. Start working through things asap
+   2. Keep Samu always updated on what you do
+   3. In case you need to leave for something or take a break, always communicate
+
+
+
+
+When logging off:
+1. Check Airtable
+   1. See if any videos need to be QCd
+   2. See if any videos need to be scheduled
+   3. See which videos are close to deadline and if we have update on them
+   4. See which videos are currently being revised and if we have update on them
+2. Check all Slack channels
+   1. See if there’s anyone waiting for your input (Assignments, Qs, etc.)
+   2. See if there’s anything missed
+   3. See if there’s anything you can help with
+   4. See if there are any additional tasks for you
+   5. See if any editors didn’t reply for their check-in
+3. Send proper messages to everyone
+   1. Check in on everything that’s needed
+   2. Follow up on everything that’s needed
+   3. TRIPLE CHECK to make sure we haven’t missed anything
+Airtable overview
+Get an overall understanding of how our Airtable system works by watching this Loom:
+KS Media Airtable Overview
+Google Drive overview
+KS Media Google Drive Overview
+Managing videos in Airtable
+Current operations process:
+1. Ideas needed slack ping
+2. Creating 4 ideas and sending it to client for feedback
+3. Creating 4 items in airtable as “sent to scriptwriter” by PM
+   1. Creating 4 items in airtable as “sent to scriptwriter” by PM
+   2. Project Management SOP
+4. Writing the 4 scripts
+5. Scripts sent to client by Samu
+6. Client records a video
+7. PM puts it in Airtable and assigns it to editor and thumbnail designer (slack ping)
+   1. How to Assign a Client Video to Editor and Thumbnail Deisgner
+   2. What deadline to put in Airtable
+8. Editor giving updates and PM checking in as well
+   1. Project Management SOP
+9. Thumbnail designer creates the thumbnail and Samu reviews
+10. Samu tags PM for approved thumbnails
+11. Editor sends video for review in Airtable (frame.io)
+12. PM reviews and sets to editing revisions (slack ping)
+13. Editor implements revs
+14. PM approves in Airtable
+15. PM sends it to client
+   1. Project Management SOP
+16. If client has revs PM sends it to editor and process repeats
+   1. This is done through frame, as clients leave revisions there
+17. When client approves PM schedules the video
+   1. Project Management SOP
+
+
+Your job will be the things in yellow. Blue stuff are automations.
+
+
+
+
+
+
+
+
+
+
+
+
+Checking progress with editors
+Overall, you should be orchestrating all the editors, making sure all of them are working on the videos they should be, everything is going smoothly and the videos will be done as per the deadline. 
+
+
+Checking progress with editors
+
+
+If an editor misses check in, message them in their Slack channel after 8 hours of the check-in message. 
+
+
+If they still don’t respond in the next 16 hours, text them on WhatsApp:
+Hey, this is NAME from KS Media. Is everything ok? We haven’t got an update from you on Slack for almost a day. Please check in ASAP.
+Getting thumbnails for videos
+Getting thumbnails for videos
+Sending videos to clients for review
+Message template:
+
+
+Hey @client, new video is ready for checking: (frame link)
+Folder with thumbnail: (drive folder in “Finished Videos” with thumbnail and social posts needed)
+
+
+If it’s approved, let us know and we’re scheduling it! If you have any revisions, feel free to put them in frame :)
+
+
+
+
+
+
+Loom guide: Sending videos to clients for review
+(make sure instead of @client you tag them by their name)
+
+
+Don’t forget:
+* Let editor know vid is sent to client for review
+* Make sure you send all deliverables to clients
+* Update status to ‘sent to client’
+Scheduling client videos on Youtube
+Steps of scheduling a video: How to Schedule a Client Video on Youtube (SOP)
+1. Download the video and thumbnail file to your computer
+2. Log into the client’s channel
+3. Start uploading the video file
+4. Copy-paste the title from the script
+   1. Make sure there are no variables in it
+5. Copy-paste description from the client’s description template
+   1. Customize the appropriate parts
+   2. Insert a custom UTM link if needed
+   3. Double check to see
+      1. Links working
+      2. No spelling errors
+6. Put in the thumbnail
+   1. If there are multiple thumbnail variations, set up a thumbnail test
+   2. Make sure what you put in is the right thumbnail by seeing if it matches the title and the intro of the video
+7. Choose “No, it's not made for kids”
+8. Put in tags
+   1. Use this site: https://rapidtags.io/generator/ 
+   2. For titles that are hard to understand, can be misinterpreted or very niche, you should tweak the title you put in this site so it gives you the right tags
+   3. Before pasting it to Youtube, manually remove the not relevant ones for the particular video or client
+   4. It will always give you some unrelated tags so make sure you filter those out
+   5. Tags are not super important, the only thing we want is to have the main keywords combinations that are relevant for the video and NOT have any irrelevant ones
+9. Add video elements
+   1. Usually, we just add the elements from the last video (1 recommended video, 1 channel logo)
+   2. If the client sends viewers to watch a specific video at the end, make sure you choose that and put it at the right place
+10. Monetization (optional)
+   1. Choose the right options so the videos are monetized
+11. Schedule the video at the right time
+   1. The standard schedule time is 11am EST on weekdays
+   2. For the clients that we make 4 videos per month for, we try to post weekly on the same day
+   3. Sometimes there are special requests from clients about when to post, so you should look out for that in the Slack channel
+12. Double check everything (IMPORTANT)
+   1. Check if you uploaded the right video file by playing the intro and outro and skimming through it
+   2. Check if it’s the appropriate thumbnail and title for it
+   3. Check if the description is properly customized, has no spelling errors and links are clickable
+   4. Check if you scheduled the video at the right time
+13. Mark the video as Scheduled in Airtable
+14. Message the client
+   1. Hey @name/guys, new video is scheduled for Tuesday 11am EST.
+Handling editor payments
+We pay editors every 15th and 30th of each month. So on these 2 days, when you log in, you should send this message to all editor channels:
+
+
+Hey, we’re paying you today. Please send over how much $ we owe you and a breakdown of the videos you did. Thank you!
+
+
+
+
+When editors reply, quickly cross-check the number they say with how many videos they've done in their table, and the pricing table that you see below. 
+If some numbers don't make sense, reach out to me (Samu). Other than that, note down the amounts in this Google sheet:
+Editor payments
+
+
+After they send the info, ask for an invoice:
+Thanks. Could you send an invoice about it?
+
+
+Then, put it in the Google Sheet as well (You can upload it to this folder: Invoices )
+
+
+
+
+
+
+Amna
+
+
+Price: $150/video
+Platform: Wise
+Details:
+AMNA NADEEM
+Meezan Bank
+Account Number: 02840111929651
+IBAN: PK91MEZN0002840111929651
+
+
+
+
+Ananda
+
+
+Price: $230/normal video
+* $185/arborxr interview vid
+* $50/repurposed arborxr short
+* $100/new arborxr short ($80 under 2min)
+Platform: Wise
+Details:
+Account Holder Name: VIREOMEDIA
+Account number: 925020024417154
+IFSC Code: UTIB0005217
+
+
+
+
+Chris
+
+
+Price: $200/video
+Platform: Wise
+Details:
+He provides payment link
+
+
+
+
+Exander
+
+
+Price: $200/video
+$280/video above 18min
+$150/justin course video
+$50/hiver podcast intro
+Platform: Payoneer
+Details:
+mo3p10@gmail.com
+
+
+
+
+Megh
+
+
+Price: $180/video
+Platform: Wise
+Details:
+He provides payment link
+
+
+
+
+Rafael
+
+
+Price: 
+* $20/music video
+* $100/adam podcast
+* $80/magentrix video
+Platform: Stripe
+Details:
+https://buy.stripe.com/cN22an2ES9Fq4h228f 
+
+
+
+
+Sakib
+
+
+Price: $200/video
+Platform: Payoneer
+Details:
+samadahmed1806@gmail.com
+
+
+
+
+Suhaib
+
+
+Price: $20/short
+Platform: Wise
+Details:
+Skydo bank details
+
+
+
+
+Syed N
+
+
+Price: $200/video
+Platform: Payoneer
+Details:
+syednajamshah120@gmail.com
+
+
+
+
+Ram
+
+
+Price: $20/thumbnail
+* +$10 per variation
+Platform: Payoneer
+Details:
+He provides payment link
+*Note: He sends this on his own so we don’t have to check in
+
+
+
+
+Jov
+
+
+Price: $220/video
+Platform: Wise
+Details:
+@jovenq5
+
+
+
+
+Sanjit
+
+
+Price: $200/video
+Platform: Wise
+Details:
+sanjitsaureshkumar@gmail.com
+
+
+Ruben
+
+
+Price: $150/video
+Platform: Paypal
+Details:
+https://www.paypal.com/paypalme/Rubencitopaa 
+
+
+
+
+Which Editor Edits For Which Client
+ Nicolas - Amna
+Josh - Amna
+Sam - Megh
+Adam Robinson - Megh
+Adam Robinson (podcasts) - Rafael
+Justin - Chris
+Christian - Ananda
+Hiver podcast - Chris
+Magentrix - Rafael
+Hiver - Sakib
+Taylor - Sakib
+Fibbler - Syed N
+Jeremy - Chris
+Anthony H - Syed N
+Tom - Golden
+Understory - Chris
+Omeed - Sanjit
+Valentin - ?
+Shizzle - Raj
+Tyler - Lin
+Emailchaser -
+vFair - 
+Liam - Chris
+
+
+
+
+
+
+Client Introduction
+Samu will send this message first for older clients, and something a bit different for newer clients:
+
+
+Hey NAME, I just added our new ops manager to the chat, @. He’s handling a lot of the admin work and will be available even during hours when I’m not, as he’s in the US. But I’ll be here managing and communicating just as usual :) 
+
+
+
+
+Project manager should introduce themselves:
+
+
+Hey NAME, great to meet you and I’m excited to start working together. Samu will still be the main point of contact, but I’ll help wherever I can.
+
+
+
+
+Make sure you change “NAME” to tagging the client with @.
+
+
+
+
+Intro to new clients:
+
+
+Hey NAME, great to meet you! I’m the ops manager at KS Media and I’m excited to start working together. Samu will be the main point of contact, but I’ll help wherever I can.
+
+
+
+
+
+
+
+
+Onboarding Editors
+1. Introduce yourself:
+Hey NAME, I’m Simon, the ops manager at KS Media. Looking forward to working with you!
+2. Add them to Airtable
+3. Send the Airtable SOP to their Slack channel: 
+Here's the SOP on how to set up Airtable where we'll assign all the videos to you: https://docs.google.com/document/d/1SM93LtYMlstQjlsGnPLtWY1-2JrFgctg6LBBv-bsmA4/edit?usp=drive_link 
+4. Ask for their payment details to put on the appropriate SOP
+5. Ask them if they have any questions
+
+
+Loom guide: Editor Onboarding SOP
+Ideas for future systems
+   1. Automated check-in slack message to all editors
+   1. Ask when they usually start work: Hey @NAME, at what time do you usually start work on most days?
+   2. Once they reply, set up an automated Slack workflow for each editor  
+   3.      4. After it’s set up, explain the editor that you set it up, and send the editor SOP where they can see how they should respond to that message each day
+
+
+
+
+
+
+      2. Create editor SOP
+      1. For one tab, we can copy paste the Airtable SOP
+      2. Then we should create another tab about including general stuff and rules
+      1. Reply to check in messages in a specific way
+      2. Always double check before sending
+      3. Always provide accurate timeframes and ETAs
+      4. Payment process (15th and 30th, they need to send the list of videos and amount)
+      5. Etc.
+
+
+
+
+      3. Check in/Check out routine
+      1. Check in
+      1. Message Samu
+      2. Go through every single editor and client slack channel
+      3. Make a list of tasks in priority
+      4. Start hammering
+      2. Check out
+      1. Go through every single editor and client slack channel
+      2. Make sure all tasks are done
+      3. Look for things we missed and open loops
+      4. Message Samu
+
+
+
+
+
+
+      4. Supervising Once Per Day
+      1. Check what’s up with vids close to deadline
+      2. Check if editors checked in
+      3. Check which client needs to record
+      4. Check which client we need input from (vid ideas, thumbnail pics, anything)
+PM Responsibilities (With QCing)
+      * QCing all videos
+      * Assigning all videos
+      * Handling all editor communications
+      * Handling all client communications (that don’t involve strategy or input needed from Samu)
+      * Replying to clients in 20mins maximum during your work hours
+      * Sending new videos to clients with all deliverables
+      * Scheduling all videos
+      * Handling staff payment twice a month
+      * Onboarding new editors
+      * Onboarding new clients to Airtable
+      * Following up on clients
+      * Following up on editors

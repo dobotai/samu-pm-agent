@@ -1,0 +1,38 @@
+﻿What social posts are
+Many of our clients receive a LinkedIn post or email that they can put out with each of the YouTube videos we create for them. 
+
+
+When to write social posts
+You’ll receive a Slack ping each time there’s a new social post needed. Plus, you’ll have a view on Airtable that shows what social posts are needed.
+
+
+How to know what social posts to write
+For the majority of our clients, we need a LinkedIn post and an email (to their email list). But some of our clients have special needs. You can always check previous social posts to see. And also in the deliverables section in Airtable for each client, it should be listed what type of social posts they need. 
+
+
+  
+
+How to write social posts
+First, create the Social Post Generator Calude project:
+* Instructions
+   * I will give you a Youtube video script and optionally instrutions on what platforms I need posts for.
+   *    * Your job will be to write those social posts, promoting the video (attached script), based on the examples you see attached in this project. You should use that structure, style and everything but should completely tailor the social posts to the video script I attach.
+   *    * (but you don't have to always use the same wording and exact dynamics as in the examples, but should follow the overall strategy behind it)
+* Google doc to attach: Examples of Social posts
+
+
+Then, copy paste the script link into the Cluade project we have for writing social posts. Then you add what you need (e.g. LinkedIn post and email). Then you edit the output/ask claude for tweaks if needed.
+
+
+General Guide: Social Posts Guide
+Social Post Editing Guide: Example of writing social posts
+
+
+After you’re done, you just update “Social Post Status” in Airtable:
+  
+
+
+
+What to pay attention to
+Hook: very important for LinkedIn. First 2 lines should be a good hook (that’s above the fold)
+No AI sounding parts: Claude almost always puts in AI sounding parts, so we have to ALWAYS edit those
