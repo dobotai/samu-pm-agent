@@ -1,5 +1,4 @@
 // App State
-let apiKey = localStorage.getItem('api_key') || '';
 let conversationHistory = [];
 let autoScroll = true;
 
@@ -23,12 +22,6 @@ document.addEventListener('DOMContentLoaded', () => {
 
 // Settings Management
 function loadSettings() {
-    const savedKey = localStorage.getItem('api_key');
-    if (savedKey) {
-        apiKey = savedKey;
-        document.getElementById('api-key').value = savedKey;
-    }
-
     const savedAutoScroll = localStorage.getItem('auto_scroll');
     if (savedAutoScroll !== null) {
         autoScroll = savedAutoScroll === 'true';
@@ -37,13 +30,7 @@ function loadSettings() {
 }
 
 function saveSettings() {
-    const newApiKey = document.getElementById('api-key').value;
     const newAutoScroll = document.getElementById('auto-scroll').checked;
-
-    if (newApiKey) {
-        apiKey = newApiKey;
-        localStorage.setItem('api_key', newApiKey);
-    }
 
     autoScroll = newAutoScroll;
     localStorage.setItem('auto_scroll', newAutoScroll);
@@ -66,13 +53,6 @@ async function sendMessage(event) {
 
     if (!message) return;
 
-    // Check if API key is set
-    if (!apiKey) {
-        showNotification('Please set your API key in settings', 'error');
-        toggleSettings();
-        return;
-    }
-
     // Add user message to chat
     addMessage('user', message);
 
@@ -90,12 +70,11 @@ async function sendMessage(event) {
     const loadingId = showLoading();
 
     try {
-        // Send request to API
+        // Send request to API (no API key needed, using server-side auth)
         const response = await fetch('/api/chat', {
             method: 'POST',
             headers: {
-                'Content-Type': 'application/json',
-                'X-API-Key': apiKey
+                'Content-Type': 'application/json'
             },
             body: JSON.stringify({
                 message: message,

@@ -106,10 +106,6 @@
             </div>
             <div class="modal-body">
                 <div class="setting-item">
-                    <label for="api-key">API Key:</label>
-                    <input type="password" id="api-key" placeholder="Enter your API key">
-                </div>
-                <div class="setting-item">
                     <label for="client-name">Client Name:</label>
                     <input type="text" id="client-name" value="youtube_agency" readonly>
                 </div>
@@ -119,6 +115,9 @@
                         Auto-scroll to latest message
                     </label>
                 </div>
+                <p style="color: var(--text-secondary); font-size: 0.875rem; margin-top: 1rem;">
+                    🔒 Authentication is handled securely via Railway environment variables.
+                </p>
             </div>
             <div class="modal-footer">
                 <button class="btn-secondary" onclick="toggleSettings()">Cancel</button>

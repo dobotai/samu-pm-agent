@@ -72,32 +72,35 @@ class ToolsResponse(BaseModel):
 
 
 # Authentication
-def verify_api_key(x_api_key: str = Header(...)) -> str:
+def verify_api_key(x_api_key: Optional[str] = Header(None)) -> str:
     """
     Verify client API key and return client name.
+    If no API key is provided, authentication is skipped (for dashboard use).
 
     Args:
-        x_api_key: API key from request header
+        x_api_key: Optional API key from request header
 
     Returns:
-        Client name if authenticated
+        Client name
 
     Raises:
-        HTTPException: If authentication fails
+        HTTPException: If authentication fails when key is provided
     """
     expected_key = os.getenv("CLIENT_API_KEY")
 
-    if not expected_key:
-        raise HTTPException(
-            status_code=500,
-            detail="Server configuration error: CLIENT_API_KEY not set"
-        )
+    # If API key is provided, verify it
+    if x_api_key:
+        if not expected_key:
+            raise HTTPException(
+                status_code=500,
+                detail="Server configuration error: CLIENT_API_KEY not set"
+            )
 
-    if x_api_key != expected_key:
-        raise HTTPException(status_code=401, detail="Invalid API key")
+        if x_api_key != expected_key:
+            raise HTTPException(status_code=401, detail="Invalid API key")
 
-    # Get client name from environment
-    client_name = os.getenv("CLIENT_NAME", "default_client")
+    # Return client name from environment
+    client_name = os.getenv("CLIENT_NAME", "youtube_agency")
     return client_name
 
 
