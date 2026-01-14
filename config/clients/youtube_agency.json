@@ -1,9 +1,141 @@
 {
   "client_name": "youtube_agency",
   "agent_type": "project_management",
-  "system_prompt": "You are a project management assistant for a YouTube content agency. Help manage video projects, track content schedules, coordinate team tasks, and access information from Slack, Google Drive, and Airtable. Be professional, proactive, and detail-oriented. Always confirm before making significant changes to project data.",
+  "system_prompt": "You are a powerful AI assistant with broad capabilities similar to Claude Code. You can read and write files, execute commands, search the web, and access Slack, Google Drive, and Airtable.\n\n## CONFIRMATION REQUIRED\nBefore making ANY changes (writing files, editing files, executing commands, sending messages), you MUST:\n1. Explain exactly what you're about to do\n2. Show the exact content/command\n3. Ask: 'Should I proceed with this change? (yes/no)'\n4. Wait for explicit 'yes' before executing\n\nRead-only operations (reading files, searching, listing) do NOT require confirmation.\n\nBe professional, thorough, and helpful. You have extensive capabilities - use them wisely.",
 
   "available_tools": [
+    {
+      "name": "read_file",
+      "script": "execution/file_ops.py",
+      "description": "Read the contents of a file. Returns line-numbered content.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "read"},
+          "file_path": {"type": "string", "description": "Absolute or relative path to the file"},
+          "offset": {"type": "number", "description": "Line number to start from (0-indexed)", "default": 0},
+          "limit": {"type": "number", "description": "Number of lines to read", "default": 2000}
+        },
+        "required": ["action", "file_path"]
+      }
+    },
+    {
+      "name": "write_file",
+      "script": "execution/file_ops.py",
+      "description": "Write content to a file. Creates the file if it doesn't exist, overwrites if it does. REQUIRES CONFIRMATION.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "write"},
+          "file_path": {"type": "string", "description": "Path to the file to write"},
+          "content": {"type": "string", "description": "Content to write to the file"}
+        },
+        "required": ["action", "file_path", "content"]
+      }
+    },
+    {
+      "name": "edit_file",
+      "script": "execution/file_ops.py",
+      "description": "Edit a file by replacing specific text. REQUIRES CONFIRMATION.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "edit"},
+          "file_path": {"type": "string", "description": "Path to the file to edit"},
+          "old_string": {"type": "string", "description": "Text to find and replace"},
+          "new_string": {"type": "string", "description": "Text to replace with"},
+          "replace_all": {"type": "boolean", "description": "Replace all occurrences", "default": false}
+        },
+        "required": ["action", "file_path", "old_string", "new_string"]
+      }
+    },
+    {
+      "name": "list_directory",
+      "script": "execution/file_ops.py",
+      "description": "List files and directories in a path",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "list"},
+          "dir_path": {"type": "string", "description": "Directory path to list", "default": "."},
+          "pattern": {"type": "string", "description": "Optional filter pattern (e.g., *.py)"}
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "execute_command",
+      "script": "execution/bash_exec.py",
+      "description": "Execute a shell/bash command. REQUIRES CONFIRMATION for any command that modifies state.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "command": {"type": "string", "description": "The command to execute"},
+          "cwd": {"type": "string", "description": "Working directory for the command"},
+          "timeout": {"type": "number", "description": "Timeout in seconds", "default": 120}
+        },
+        "required": ["command"]
+      }
+    },
+    {
+      "name": "glob_search",
+      "script": "execution/search_tools.py",
+      "description": "Find files matching a glob pattern (e.g., **/*.py, src/**/*.ts)",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "glob"},
+          "pattern": {"type": "string", "description": "Glob pattern to match files"},
+          "path": {"type": "string", "description": "Base path to search from", "default": "."},
+          "max_results": {"type": "number", "description": "Maximum results to return", "default": 100}
+        },
+        "required": ["action", "pattern"]
+      }
+    },
+    {
+      "name": "grep_search",
+      "script": "execution/search_tools.py",
+      "description": "Search for a pattern in file contents (regex supported)",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "grep"},
+          "pattern": {"type": "string", "description": "Regex pattern to search for"},
+          "path": {"type": "string", "description": "File or directory to search in", "default": "."},
+          "file_pattern": {"type": "string", "description": "Only search files matching this pattern (e.g., *.py)"},
+          "case_insensitive": {"type": "boolean", "description": "Case insensitive search", "default": false},
+          "context_lines": {"type": "number", "description": "Lines of context around matches", "default": 0}
+        },
+        "required": ["action", "pattern"]
+      }
+    },
+    {
+      "name": "web_fetch",
+      "script": "execution/web_tools.py",
+      "description": "Fetch and read content from a URL",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "fetch"},
+          "url": {"type": "string", "description": "URL to fetch content from"}
+        },
+        "required": ["action", "url"]
+      }
+    },
+    {
+      "name": "web_search",
+      "script": "execution/web_tools.py",
+      "description": "Search the web using DuckDuckGo",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "search"},
+          "query": {"type": "string", "description": "Search query"},
+          "num_results": {"type": "number", "description": "Number of results to return", "default": 5}
+        },
+        "required": ["action", "query"]
+      }
+    },
     {
       "name": "slack_list_channels",
       "script": "execution/tools/slack_read.py",
@@ -11,13 +143,9 @@
       "input_schema": {
         "type": "object",
         "properties": {
-          "action": {
-            "type": "string",
-            "enum": ["list_channels"],
-            "default": "list_channels"
-          }
+          "action": {"type": "string", "const": "list_channels"}
         },
-        "required": []
+        "required": ["action"]
       }
     },
     {
@@ -27,22 +155,11 @@
       "input_schema": {
         "type": "object",
         "properties": {
-          "action": {
-            "type": "string",
-            "enum": ["read_messages"],
-            "default": "read_messages"
-          },
-          "channel_id": {
-            "type": "string",
-            "description": "The Slack channel ID to read messages from"
-          },
-          "limit": {
-            "type": "number",
-            "description": "Number of messages to retrieve (default: 50)",
-            "default": 50
-          }
+          "action": {"type": "string", "const": "read_messages"},
+          "channel_id": {"type": "string", "description": "The Slack channel ID"},
+          "limit": {"type": "number", "description": "Number of messages to retrieve", "default": 50}
         },
-        "required": ["channel_id"]
+        "required": ["action", "channel_id"]
       }
     },
     {
@@ -52,17 +169,10 @@
       "input_schema": {
         "type": "object",
         "properties": {
-          "action": {
-            "type": "string",
-            "enum": ["search_messages"],
-            "default": "search_messages"
-          },
-          "query": {
-            "type": "string",
-            "description": "Search query to find messages"
-          }
+          "action": {"type": "string", "const": "search_messages"},
+          "query": {"type": "string", "description": "Search query"}
         },
-        "required": ["query"]
+        "required": ["action", "query"]
       }
     },
     {
@@ -72,89 +182,52 @@
       "input_schema": {
         "type": "object",
         "properties": {
-          "action": {
-            "type": "string",
-            "enum": ["list_users"],
-            "default": "list_users"
-          }
+          "action": {"type": "string", "const": "list_users"}
         },
-        "required": []
+        "required": ["action"]
       }
     },
     {
       "name": "slack_send_message",
       "script": "execution/tools/slack_write.py",
-      "description": "Send a message to a Slack channel",
+      "description": "Send a message to a Slack channel. REQUIRES CONFIRMATION.",
       "input_schema": {
         "type": "object",
         "properties": {
-          "action": {
-            "type": "string",
-            "enum": ["send_message"],
-            "default": "send_message"
-          },
-          "channel": {
-            "type": "string",
-            "description": "Channel ID or channel name (e.g., #general)"
-          },
-          "message": {
-            "type": "string",
-            "description": "The message text to send"
-          }
+          "action": {"type": "string", "const": "send_message"},
+          "channel": {"type": "string", "description": "Channel ID or name"},
+          "message": {"type": "string", "description": "Message text to send"}
         },
-        "required": ["channel", "message"]
+        "required": ["action", "channel", "message"]
       }
     },
     {
       "name": "slack_send_dm",
       "script": "execution/tools/slack_write.py",
-      "description": "Send a direct message to a Slack user by email or user ID",
+      "description": "Send a direct message to a Slack user. REQUIRES CONFIRMATION.",
       "input_schema": {
         "type": "object",
         "properties": {
-          "action": {
-            "type": "string",
-            "enum": ["send_dm"],
-            "default": "send_dm"
-          },
-          "user_identifier": {
-            "type": "string",
-            "description": "User email (e.g., anna@company.com) or Slack user ID"
-          },
-          "message": {
-            "type": "string",
-            "description": "The message text to send"
-          }
+          "action": {"type": "string", "const": "send_dm"},
+          "user_identifier": {"type": "string", "description": "User email or Slack user ID"},
+          "message": {"type": "string", "description": "Message text to send"}
         },
-        "required": ["user_identifier", "message"]
+        "required": ["action", "user_identifier", "message"]
       }
     },
     {
       "name": "slack_reply_to_thread",
       "script": "execution/tools/slack_write.py",
-      "description": "Reply to a message thread in Slack",
+      "description": "Reply to a message thread in Slack. REQUIRES CONFIRMATION.",
       "input_schema": {
         "type": "object",
         "properties": {
-          "action": {
-            "type": "string",
-            "enum": ["reply_to_thread"],
-            "default": "reply_to_thread"
-          },
-          "channel": {
-            "type": "string",
-            "description": "Channel ID where the thread exists"
-          },
-          "thread_ts": {
-            "type": "string",
-            "description": "Timestamp of the parent message"
-          },
-          "message": {
-            "type": "string",
-            "description": "The reply text to send"
-          }
+          "action": {"type": "string", "const": "reply_to_thread"},
+          "channel": {"type": "string", "description": "Channel ID"},
+          "thread_ts": {"type": "string", "description": "Timestamp of parent message"},
+          "message": {"type": "string", "description": "Reply text"}
         },
-        "required": ["channel", "thread_ts", "message"]
+        "required": ["action", "channel", "thread_ts", "message"]
       }
     },
     {
@@ -164,111 +237,65 @@
       "input_schema": {
         "type": "object",
         "properties": {
-          "action": {
-            "type": "string",
-            "enum": ["add_reaction"],
-            "default": "add_reaction"
-          },
-          "channel": {
-            "type": "string",
-            "description": "Channel ID where the message exists"
-          },
-          "timestamp": {
-            "type": "string",
-            "description": "Timestamp of the message to react to"
-          },
-          "emoji": {
-            "type": "string",
-            "description": "Emoji name (e.g., thumbsup, eyes, checkmark)"
-          }
+          "action": {"type": "string", "const": "add_reaction"},
+          "channel": {"type": "string", "description": "Channel ID"},
+          "timestamp": {"type": "string", "description": "Message timestamp"},
+          "emoji": {"type": "string", "description": "Emoji name (e.g., thumbsup)"}
         },
-        "required": ["channel", "timestamp", "emoji"]
+        "required": ["action", "channel", "timestamp", "emoji"]
       }
     },
     {
       "name": "drive_list_files",
       "script": "execution/tools/drive_read.py",
-      "description": "List files and folders from Google Drive",
+      "description": "List files from Google Drive",
       "input_schema": {
         "type": "object",
         "properties": {
-          "action": {
-            "type": "string",
-            "enum": ["list_files"],
-            "default": "list_files"
-          },
-          "folder_id": {
-            "type": "string",
-            "description": "Optional: Specific folder ID to list files from"
-          },
-          "limit": {
-            "type": "number",
-            "description": "Number of files to retrieve (default: 100)",
-            "default": 100
-          }
+          "action": {"type": "string", "const": "list_files"},
+          "folder_id": {"type": "string", "description": "Folder ID to list from"},
+          "limit": {"type": "number", "default": 100}
         },
-        "required": []
+        "required": ["action"]
       }
     },
     {
       "name": "drive_search_files",
       "script": "execution/tools/drive_read.py",
-      "description": "Search for files in Google Drive by name",
+      "description": "Search for files in Google Drive",
       "input_schema": {
         "type": "object",
         "properties": {
-          "action": {
-            "type": "string",
-            "enum": ["search_files"],
-            "default": "search_files"
-          },
-          "query": {
-            "type": "string",
-            "description": "Search query to find files"
-          }
+          "action": {"type": "string", "const": "search_files"},
+          "query": {"type": "string", "description": "Search query"}
         },
-        "required": ["query"]
+        "required": ["action", "query"]
       }
     },
     {
       "name": "drive_get_file_info",
       "script": "execution/tools/drive_read.py",
-      "description": "Get detailed information about a specific Drive file",
+      "description": "Get detailed info about a Drive file",
       "input_schema": {
         "type": "object",
         "properties": {
-          "action": {
-            "type": "string",
-            "enum": ["get_file_info"],
-            "default": "get_file_info"
-          },
-          "file_id": {
-            "type": "string",
-            "description": "The Google Drive file ID"
-          }
+          "action": {"type": "string", "const": "get_file_info"},
+          "file_id": {"type": "string", "description": "The file ID"}
         },
-        "required": ["file_id"]
+        "required": ["action", "file_id"]
       }
     },
     {
       "name": "drive_list_recent",
       "script": "execution/tools/drive_read.py",
-      "description": "List recently modified files in Google Drive",
+      "description": "List recently modified Drive files",
       "input_schema": {
         "type": "object",
         "properties": {
-          "action": {
-            "type": "string",
-            "enum": ["list_recent"],
-            "default": "list_recent"
-          },
-          "limit": {
-            "type": "number",
-            "description": "Number of files to retrieve (default: 20)",
-            "default": 20
-          }
+          "action": {"type": "string", "const": "list_recent"},
+          "limit": {"type": "number", "default": 20}
         },
-        "required": []
+        "required": ["action"]
       }
     },
     {
@@ -278,173 +305,96 @@
       "input_schema": {
         "type": "object",
         "properties": {
-          "action": {
-            "type": "string",
-            "enum": ["list_records"],
-            "default": "list_records"
-          },
-          "base_id": {
-            "type": "string",
-            "description": "The Airtable base ID"
-          },
-          "table_name": {
-            "type": "string",
-            "description": "The table name within the base"
-          },
-          "limit": {
-            "type": "number",
-            "description": "Number of records to retrieve (default: 100)",
-            "default": 100
-          }
+          "action": {"type": "string", "const": "list_records"},
+          "base_id": {"type": "string"},
+          "table_name": {"type": "string"},
+          "limit": {"type": "number", "default": 100}
         },
-        "required": ["base_id", "table_name"]
+        "required": ["action", "base_id", "table_name"]
       }
     },
     {
       "name": "airtable_get_record",
       "script": "execution/tools/airtable_read.py",
-      "description": "Get a specific record from Airtable by ID",
+      "description": "Get a specific Airtable record",
       "input_schema": {
         "type": "object",
         "properties": {
-          "action": {
-            "type": "string",
-            "enum": ["get_record"],
-            "default": "get_record"
-          },
-          "base_id": {
-            "type": "string",
-            "description": "The Airtable base ID"
-          },
-          "table_name": {
-            "type": "string",
-            "description": "The table name within the base"
-          },
-          "record_id": {
-            "type": "string",
-            "description": "The record ID to retrieve"
-          }
+          "action": {"type": "string", "const": "get_record"},
+          "base_id": {"type": "string"},
+          "table_name": {"type": "string"},
+          "record_id": {"type": "string"}
         },
-        "required": ["base_id", "table_name", "record_id"]
+        "required": ["action", "base_id", "table_name", "record_id"]
       }
     },
     {
       "name": "airtable_search_records",
       "script": "execution/tools/airtable_read.py",
-      "description": "Search for records in an Airtable table",
+      "description": "Search Airtable records",
       "input_schema": {
         "type": "object",
         "properties": {
-          "action": {
-            "type": "string",
-            "enum": ["search_records"],
-            "default": "search_records"
-          },
-          "base_id": {
-            "type": "string",
-            "description": "The Airtable base ID"
-          },
-          "table_name": {
-            "type": "string",
-            "description": "The table name within the base"
-          },
-          "field_name": {
-            "type": "string",
-            "description": "The field name to search in"
-          },
-          "search_value": {
-            "type": "string",
-            "description": "The value to search for"
-          }
+          "action": {"type": "string", "const": "search_records"},
+          "base_id": {"type": "string"},
+          "table_name": {"type": "string"},
+          "field_name": {"type": "string"},
+          "search_value": {"type": "string"}
         },
-        "required": ["base_id", "table_name", "field_name", "search_value"]
+        "required": ["action", "base_id", "table_name", "field_name", "search_value"]
       }
     },
     {
       "name": "airtable_filter_records",
       "script": "execution/tools/airtable_read.py",
-      "description": "Filter records using an Airtable formula",
+      "description": "Filter Airtable records with a formula",
       "input_schema": {
         "type": "object",
         "properties": {
-          "action": {
-            "type": "string",
-            "enum": ["filter_records"],
-            "default": "filter_records"
-          },
-          "base_id": {
-            "type": "string",
-            "description": "The Airtable base ID"
-          },
-          "table_name": {
-            "type": "string",
-            "description": "The table name within the base"
-          },
-          "filter_formula": {
-            "type": "string",
-            "description": "Airtable filter formula (e.g., '{Status} = \"In Progress\"')"
-          }
+          "action": {"type": "string", "const": "filter_records"},
+          "base_id": {"type": "string"},
+          "table_name": {"type": "string"},
+          "filter_formula": {"type": "string", "description": "Airtable formula e.g. {Status}='Done'"}
         },
-        "required": ["base_id", "table_name", "filter_formula"]
+        "required": ["action", "base_id", "table_name", "filter_formula"]
       }
     },
     {
       "name": "airtable_list_bases",
       "script": "execution/tools/airtable_read.py",
-      "description": "List all available Airtable bases",
+      "description": "List all Airtable bases",
       "input_schema": {
         "type": "object",
         "properties": {
-          "action": {
-            "type": "string",
-            "enum": ["list_bases"],
-            "default": "list_bases"
-          }
+          "action": {"type": "string", "const": "list_bases"}
         },
-        "required": []
+        "required": ["action"]
       }
     },
     {
       "name": "airtable_get_table_schema",
       "script": "execution/tools/airtable_read.py",
-      "description": "Get the schema (field names) for an Airtable table",
+      "description": "Get the schema of an Airtable table",
       "input_schema": {
         "type": "object",
         "properties": {
-          "action": {
-            "type": "string",
-            "enum": ["get_table_schema"],
-            "default": "get_table_schema"
-          },
-          "base_id": {
-            "type": "string",
-            "description": "The Airtable base ID"
-          },
-          "table_name": {
-            "type": "string",
-            "description": "The table name within the base"
-          }
+          "action": {"type": "string", "const": "get_table_schema"},
+          "base_id": {"type": "string"},
+          "table_name": {"type": "string"}
         },
-        "required": ["base_id", "table_name"]
+        "required": ["action", "base_id", "table_name"]
       }
     }
   ],
 
   "constraints": [
-    "Can read unlimited data from Slack, Google Drive, and Airtable",
-    "Can send individual Slack messages, DMs, and reactions",
-    "APPROVAL REQUIRED for bulk operations: Creating/updating/deleting more than 5 Airtable records at once",
-    "APPROVAL REQUIRED for deleting more than 3 records at once",
-    "APPROVAL REQUIRED for any operation that could affect multiple client channels",
-    "Always confirm before sending messages to clients or external team members",
-    "Always explain what action you're about to take before doing it",
-    "Be professional, helpful, and proactive in all communications",
-    "Explain limitations when functionality is not available",
-    "Recommend new tools when clients request unavailable features",
-    "Respect data privacy - do not share sensitive information inappropriately",
-    "Never send spam or unsolicited messages",
-    "Never delete data without explicit confirmation",
-    "Log all approval requests to .tmp/logs/approval_requests.jsonl"
+    "CONFIRMATION REQUIRED: Always ask for confirmation before making any changes (write, edit, execute, send)",
+    "Read-only operations do NOT require confirmation",
+    "Show exactly what you're about to do before asking for confirmation",
+    "Wait for explicit 'yes' before executing any modification",
+    "Be thorough and use your full capabilities to help the user",
+    "Explain your reasoning and approach",
+    "If something fails, diagnose and suggest fixes"
   ],
 
   "output_destinations": {

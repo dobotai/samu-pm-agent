@@ -26,11 +26,23 @@ def main():
     # Parse input arguments
     if len(sys.argv) < 2:
         print(json.dumps({
-            "error": "Missing action parameter. Usage: slack_read.py <action> [params]"
+            "error": "Missing action parameter. Usage: slack_read.py <action> [params_json]"
         }))
         sys.exit(1)
 
     action = sys.argv[1]
+
+    # Parse JSON params if provided
+    params = {}
+    if len(sys.argv) > 2:
+        try:
+            params = json.loads(sys.argv[2])
+        except json.JSONDecodeError:
+            # Fallback to positional args for backward compatibility
+            params = {"arg1": sys.argv[2]} if len(sys.argv) > 2 else {}
+            if len(sys.argv) > 3:
+                params["arg2"] = sys.argv[3]
+
     client = WebClient(token=slack_token)
 
     try:
@@ -55,14 +67,14 @@ def main():
 
         elif action == "read_messages":
             # Read messages from a specific channel
-            if len(sys.argv) < 3:
+            channel_id = params.get("channel_id") or params.get("arg1")
+            if not channel_id:
                 print(json.dumps({
                     "error": "Missing channel_id parameter"
                 }))
                 sys.exit(1)
 
-            channel_id = sys.argv[2]
-            limit = int(sys.argv[3]) if len(sys.argv) > 3 else 50
+            limit = int(params.get("limit", 50))
 
             result = client.conversations_history(
                 channel=channel_id,
@@ -95,13 +107,12 @@ def main():
 
         elif action == "search_messages":
             # Search messages across workspace
-            if len(sys.argv) < 3:
+            query = params.get("query") or params.get("arg1")
+            if not query:
                 print(json.dumps({
                     "error": "Missing query parameter"
                 }))
                 sys.exit(1)
-
-            query = sys.argv[2]
             result = client.search_messages(query=query)
 
             messages = []

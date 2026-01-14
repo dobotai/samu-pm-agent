@@ -230,10 +230,14 @@ Always be helpful, professional, and work within your defined boundaries."""
         params = tool_config.get("parameters", {}).copy()
         params.update(tool_input)
 
-        # Build command
+        # Extract action if present (for tools that use action as first arg)
+        action = params.pop("action", None)
+
+        # Build command - pass action as first arg, then params as JSON
         cmd = ["python", script_path]
-        for key, value in params.items():
-            cmd.extend([f"--{key}", str(value)])
+        if action:
+            cmd.append(action)
+        cmd.append(json.dumps(params))
 
         try:
             # Execute script
