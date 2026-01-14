@@ -130,6 +130,7 @@ Always be helpful, professional, and work within your defined boundaries."""
     def _process_response(self, response) -> Dict[str, Any]:
         """
         Process Claude's response and execute any tool calls.
+        Handles multi-turn tool use by looping until no more tools are called.
 
         Args:
             response: Response from Claude API
@@ -137,44 +138,50 @@ Always be helpful, professional, and work within your defined boundaries."""
         Returns:
             Dict with final response and metadata
         """
-        assistant_message = {
-            "role": "assistant",
-            "content": []
-        }
-
-        tool_results = []
+        all_tool_results = []
         final_text = ""
+        current_response = response
+        max_iterations = 10  # Safety limit to prevent infinite loops
 
-        # Process content blocks
-        for block in response.content:
-            if block.type == "text":
-                final_text = block.text
-                assistant_message["content"].append(block)
+        for iteration in range(max_iterations):
+            assistant_message = {
+                "role": "assistant",
+                "content": []
+            }
+            tool_results = []
 
-            elif block.type == "tool_use":
-                # Execute the tool
-                tool_result = self._execute_tool(
-                    tool_name=block.name,
-                    tool_input=block.input,
-                    tool_use_id=block.id
-                )
+            # Process content blocks
+            for block in current_response.content:
+                if block.type == "text":
+                    final_text = block.text
+                    assistant_message["content"].append(block)
 
-                tool_results.append(tool_result)
-                assistant_message["content"].append(block)
+                elif block.type == "tool_use":
+                    # Execute the tool
+                    tool_result = self._execute_tool(
+                        tool_name=block.name,
+                        tool_input=block.input,
+                        tool_use_id=block.id
+                    )
+                    tool_results.append(tool_result)
+                    all_tool_results.append(tool_result)
+                    assistant_message["content"].append(block)
 
-        # Add assistant message to history
-        self.conversation_history.append(assistant_message)
+            # Add assistant message to history
+            self.conversation_history.append(assistant_message)
 
-        # If tools were used, get final response
-        if tool_results:
+            # If no tools were used, we're done
+            if not tool_results:
+                break
+
             # Add tool results to conversation
             self.conversation_history.append({
                 "role": "user",
                 "content": tool_results
             })
 
-            # Get final response after tool execution
-            final_response = self.client.messages.create(
+            # Get next response after tool execution
+            current_response = self.client.messages.create(
                 model="claude-opus-4-20250514",
                 max_tokens=4096,
                 system=self._build_system_prompt(),
@@ -182,27 +189,16 @@ Always be helpful, professional, and work within your defined boundaries."""
                 tools=self._build_tool_definitions() if self.available_tools else None
             )
 
-            # Extract final text
-            for block in final_response.content:
-                if block.type == "text":
-                    final_text = block.text
-
-            # Add to history
-            self.conversation_history.append({
-                "role": "assistant",
-                "content": final_response.content
-            })
-
         # Log conversation
         self._log_interaction(
-            user_message=self.conversation_history[-2 if tool_results else -1]["content"] if len(self.conversation_history) > 1 else user_message,
+            user_message="[see conversation history]",
             response=final_text,
-            tools_used=[r.get("tool_name") for r in tool_results if isinstance(r, dict) and "tool_name" in r]
+            tools_used=[r.get("tool_use_id", "unknown") for r in all_tool_results]
         )
 
         return {
             "response": final_text,
-            "tools_used": tool_results,
+            "tools_used": all_tool_results,
             "conversation_id": f"{self.client_name}_{datetime.now().isoformat()}"
         }
 
