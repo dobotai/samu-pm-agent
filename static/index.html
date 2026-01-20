@@ -48,10 +48,23 @@
         <div class="main-content">
             <!-- Header -->
             <div class="header">
-                <h2>Project Management Assistant</h2>
+                <div class="header-left">
+                    <h2>Project Management Assistant</h2>
+                    <div class="tab-nav">
+                        <button class="tab-btn active" data-tab="chat" type="button">
+                            💬 Chat
+                        </button>
+                        <button class="tab-btn" data-tab="daily-update" type="button">
+                            📋 Daily Update
+                        </button>
+                    </div>
+                </div>
                 <div class="header-actions">
-                    <button class="icon-btn" onclick="clearChat()" title="Clear Chat">
+                    <button class="icon-btn" id="clear-btn" onclick="clearChat()" title="Clear Chat">
                         🗑️ Clear
+                    </button>
+                    <button class="icon-btn" id="refresh-btn" onclick="refreshDailyUpdate()" title="Update Dashboard" style="display: none;">
+                        🔄 Update Dashboard
                     </button>
                     <button class="icon-btn" onclick="toggleSettings()" title="Settings">
                         ⚙️ Settings
@@ -71,6 +84,22 @@
                         <li>"Show me recent messages from #suhaib-editing"</li>
                         <li>"Send a message to Suhaib about the deadline"</li>
                     </ul>
+                </div>
+            </div>
+
+            <!-- Daily Update Container -->
+            <div class="daily-update-container" id="daily-update-container" style="display: none;">
+                <div class="daily-update-header">
+                    <div class="update-info">
+                        <span class="update-label">Last Updated:</span>
+                        <span class="update-time" id="last-update-time">Never</span>
+                    </div>
+                </div>
+                <div class="daily-update-content" id="daily-update-content">
+                    <div class="empty-state">
+                        <h3>📋 Daily Update</h3>
+                        <p>Click "Update Dashboard" to fetch the latest Slack updates across all channels.</p>
+                    </div>
                 </div>
             </div>
 

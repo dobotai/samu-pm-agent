@@ -137,8 +137,8 @@ async def chat(
 
         orchestrator = orchestrators[target_client]
 
-        # Process request
-        result = orchestrator.process_request(request.message)
+        # Process request (async)
+        result = await orchestrator.process_request(request.message)
 
         return ChatResponse(**result)
 

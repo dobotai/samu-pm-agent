@@ -1,11 +1,16 @@
 // App State
 let conversationHistory = [];
 let autoScroll = true;
+let currentTab = 'chat';
+let dailyUpdateData = null;
 
 // Initialize
 document.addEventListener('DOMContentLoaded', () => {
     loadSettings();
     adjustTextareaHeight();
+
+    // Check server connection on load
+    checkServerConnection();
 
     // Auto-resize textarea
     const textarea = document.getElementById('message-input');
@@ -18,7 +23,37 @@ document.addEventListener('DOMContentLoaded', () => {
             sendMessage(e);
         }
     });
+
+    // Initialize tab event listeners
+    initializeTabs();
 });
+
+// Check if server is running
+async function checkServerConnection() {
+    try {
+        const response = await fetch('/health', { method: 'GET' });
+        if (response.ok) {
+            console.log('Server connection OK');
+        } else {
+            showNotification('Server returned an error. Check server logs.', 'error');
+        }
+    } catch (error) {
+        showNotification('Cannot connect to server. Is it running?', 'error');
+        addMessage('assistant', '⚠️ **Server not connected**\n\nThe API server is not running. Please start it with:\n```\npython execution/api_server.py\n```\nOr run the `start_server.bat` file.');
+    }
+}
+
+// Tab Initialization
+function initializeTabs() {
+    const tabButtons = document.querySelectorAll('.tab-btn');
+    tabButtons.forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const tab = btn.getAttribute('data-tab');
+            switchTab(tab);
+        });
+    });
+}
 
 // Settings Management
 function loadSettings() {
@@ -70,6 +105,10 @@ async function sendMessage(event) {
     const loadingId = showLoading();
 
     try {
+        // Set up timeout (5 minutes for complex queries)
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 300000); // 5 min timeout
+
         // Send request to API (no API key needed, using server-side auth)
         const response = await fetch('/api/chat', {
             method: 'POST',
@@ -79,8 +118,11 @@ async function sendMessage(event) {
             body: JSON.stringify({
                 message: message,
                 client_name: 'youtube_agency'
-            })
+            }),
+            signal: controller.signal
         });
+
+        clearTimeout(timeoutId);
 
         // Remove loading indicator
         removeLoading(loadingId);
@@ -103,8 +145,17 @@ async function sendMessage(event) {
 
     } catch (error) {
         removeLoading(loadingId);
-        showNotification(`Error: ${error.message}`, 'error');
-        addMessage('assistant', `❌ Error: ${error.message}\n\nPlease check your API key and try again.`);
+
+        // Better error messages based on error type
+        let errorMessage = error.message;
+        if (error.name === 'AbortError') {
+            errorMessage = 'Request timed out (5 min limit). Try a simpler query.';
+        } else if (error.message === 'Failed to fetch') {
+            errorMessage = 'Cannot connect to server. Make sure the server is running.';
+        }
+
+        showNotification(`Error: ${errorMessage}`, 'error');
+        addMessage('assistant', `❌ Error: ${errorMessage}`);
     } finally {
         // Re-enable send button
         sendBtn.disabled = false;
@@ -294,3 +345,128 @@ style.textContent = `
     }
 `;
 document.head.appendChild(style);
+
+// Tab Switching
+function switchTab(tab) {
+    currentTab = tab;
+
+    // Update tab buttons
+    document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('active');
+        if (btn.dataset.tab === tab) {
+            btn.classList.add('active');
+        }
+    });
+
+    // Show/hide containers
+    const chatContainer = document.getElementById('chat-container');
+    const dailyUpdateContainer = document.getElementById('daily-update-container');
+    const inputContainer = document.querySelector('.input-container');
+    const clearBtn = document.getElementById('clear-btn');
+    const refreshBtn = document.getElementById('refresh-btn');
+
+    if (tab === 'chat') {
+        chatContainer.style.display = 'block';
+        dailyUpdateContainer.style.display = 'none';
+        inputContainer.style.display = 'block';
+        clearBtn.style.display = 'inline-flex';
+        refreshBtn.style.display = 'none';
+    } else if (tab === 'daily-update') {
+        chatContainer.style.display = 'none';
+        dailyUpdateContainer.style.display = 'flex';
+        inputContainer.style.display = 'none';
+        clearBtn.style.display = 'none';
+        refreshBtn.style.display = 'inline-flex';
+    }
+}
+
+// Daily Update Functions
+async function refreshDailyUpdate() {
+    const refreshBtn = document.getElementById('refresh-btn');
+    const contentDiv = document.getElementById('daily-update-content');
+
+    // Disable button and show loading
+    refreshBtn.disabled = true;
+    refreshBtn.innerHTML = '⏳ Updating...';
+
+    contentDiv.innerHTML = `
+        <div class="loading-state">
+            <div class="message-loading">
+                <div class="dot"></div>
+                <div class="dot"></div>
+                <div class="dot"></div>
+            </div>
+            <p>Fetching daily updates from Slack...</p>
+        </div>
+    `;
+
+    try {
+        // Send request to get daily update
+        const response = await fetch('/api/chat', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                message: 'Give me a comprehensive daily update. Summarize all important messages, activities, and updates across all Slack channels from today. Include any urgent items, deadlines, and status changes.',
+                client_name: 'youtube_agency'
+            })
+        });
+
+        if (!response.ok) {
+            const errorData = await response.json();
+            throw new Error(errorData.detail || 'Failed to get daily update');
+        }
+
+        const data = await response.json();
+        dailyUpdateData = data.response;
+
+        // Update the timestamp
+        const now = new Date();
+        const timeStr = now.toLocaleString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit'
+        });
+        document.getElementById('last-update-time').textContent = timeStr;
+
+        // Display the update
+        renderDailyUpdate(data.response);
+
+        showNotification('Daily update refreshed', 'success');
+
+    } catch (error) {
+        contentDiv.innerHTML = `
+            <div class="error-state">
+                <h3>❌ Error</h3>
+                <p>${error.message}</p>
+                <p>Please try again or check the API connection.</p>
+            </div>
+        `;
+        showNotification(`Error: ${error.message}`, 'error');
+    } finally {
+        // Re-enable button
+        refreshBtn.disabled = false;
+        refreshBtn.innerHTML = '🔄 Update Dashboard';
+    }
+}
+
+function renderDailyUpdate(content) {
+    const contentDiv = document.getElementById('daily-update-content');
+
+    // Format the content with proper styling
+    const formattedContent = formatText(content);
+
+    contentDiv.innerHTML = `
+        <div class="update-card">
+            <div class="update-card-header">
+                <span class="update-card-icon">📊</span>
+                <h3>Daily Summary</h3>
+            </div>
+            <div class="update-card-body">
+                ${formattedContent}
+            </div>
+        </div>
+    `;
+}

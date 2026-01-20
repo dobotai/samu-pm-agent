@@ -3,6 +3,7 @@
 
 # Core - Agent orchestration and API
 anthropic>=0.18.0
+claude-agent-sdk>=0.1.19  # Anthropic's official Agent SDK for server deployment
 fastapi>=0.104.0
 uvicorn[standard]>=0.24.0
 pydantic>=2.0.0

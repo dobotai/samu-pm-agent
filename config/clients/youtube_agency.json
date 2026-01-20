@@ -1,7 +1,12 @@
 {
   "client_name": "youtube_agency",
   "agent_type": "project_management",
-  "system_prompt": "You are a powerful AI assistant with broad capabilities similar to Claude Code. You can read and write files, execute commands, search the web, and access Slack, Google Drive, and Airtable.\n\n## CONFIRMATION REQUIRED\nBefore making ANY changes (writing files, editing files, executing commands, sending messages), you MUST:\n1. Explain exactly what you're about to do\n2. Show the exact content/command\n3. Ask: 'Should I proceed with this change? (yes/no)'\n4. Wait for explicit 'yes' before executing\n\nRead-only operations (reading files, searching, listing) do NOT require confirmation.\n\nBe professional, thorough, and helpful. You have extensive capabilities - use them wisely.",
+
+  "_comment": "ACTIVE CONFIG: Only system_prompt is used by the orchestrator. Claude Code CLI provides all tools.",
+
+  "system_prompt": "You are a project management assistant for a YouTube content agency. You help manage video projects, track content schedules, coordinate team tasks, and access information from Slack, Google Drive, and Airtable.\n\n## Your Capabilities (via Claude Code)\n- File operations: read, write, edit files\n- Command execution: run bash/shell commands\n- Web tools: fetch URLs, search the web\n- Slack: read channels, send messages (via execution scripts)\n- Airtable: query project data (via execution scripts)\n- Google Drive: search files (via execution scripts)\n\n## REPORTING FORMAT\nWhen reporting on videos/projects, ALWAYS use human-readable identifiers:\n- Format: \"ClientName Video #X\" (e.g., \"Taylor Video #11\", \"Nicolas Video #36\")\n- For shorts: \"ClientName Shorts #X\" (e.g., \"Dan Shorts #7\")\n- NEVER show raw Airtable record IDs to the user\n- Include the editor name and status when relevant\n\n## CONFIRMATION REQUIRED\nBefore making ANY changes (writing files, editing files, executing commands, sending messages), you MUST:\n1. Explain exactly what you're about to do\n2. Show the exact content/command\n3. Ask: 'Should I proceed with this change? (yes/no)'\n4. Wait for explicit 'yes' before executing\n\nRead-only operations (reading files, searching, listing) do NOT require confirmation.\n\nBe professional, thorough, and helpful.",
+
+  "_note_tools": "The available_tools below are NOT used by Claude Code CLI - it has its own built-in tools. These definitions are kept for documentation and potential future direct API integration.",
 
   "available_tools": [
     {
@@ -384,8 +389,156 @@
         },
         "required": ["action", "base_id", "table_name"]
       }
+    },
+    {
+      "name": "pm_get_project_etas",
+      "script": "execution/tools/pm_analytics.py",
+      "description": "Get ETAs for all projects/videos. Use for questions like 'When will a video be ready?' or 'What are the project deadlines?'",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "get_project_etas"},
+          "table_name": {"type": "string", "description": "Airtable table name", "default": "Videos"}
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "pm_get_unfollowed_messages",
+      "script": "execution/tools/pm_analytics.py",
+      "description": "List people who haven't followed up to messages. Use for 'messages get missed on slack' or 'who hasn't responded?'",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "get_unfollowed_messages"},
+          "hours": {"type": "number", "description": "Look back period in hours", "default": 24},
+          "channels": {"type": "array", "items": {"type": "string"}, "description": "Specific channels to check (optional)"}
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "pm_get_delayed_deadlines",
+      "script": "execution/tools/pm_analytics.py",
+      "description": "Find tasks with missed deadlines and no recent updates. Use for 'delayed deadlines' or 'overdue tasks'",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "get_delayed_deadlines"},
+          "table_name": {"type": "string", "description": "Airtable table name", "default": "Videos"}
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "pm_get_attention_needed",
+      "script": "execution/tools/pm_analytics.py",
+      "description": "Find messages needing immediate attention (urgent, unanswered questions, blockers). Use for 'what needs immediate attention?' or 'anything we've missed?'",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "get_attention_needed"},
+          "hours": {"type": "number", "description": "Look back period in hours", "default": 24}
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "pm_get_client_messages",
+      "script": "execution/tools/pm_analytics.py",
+      "description": "Get client-specific messages, optionally filtering for untended ones. Use for 'client messages not tended to' or 'check client channels'",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "get_client_messages"},
+          "hours": {"type": "number", "description": "Look back period in hours", "default": 24},
+          "tended": {"type": "boolean", "description": "If false, returns only untended messages", "default": false}
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "pm_get_editor_messages",
+      "script": "execution/tools/pm_analytics.py",
+      "description": "Get editor-specific messages. Use for 'check with editors' or 'editor channel messages'",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "get_editor_messages"},
+          "hours": {"type": "number", "description": "Look back period in hours", "default": 24},
+          "tended": {"type": "boolean", "description": "If false, returns only untended messages", "default": false}
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "pm_get_urgent_tasks_today",
+      "script": "execution/tools/pm_analytics.py",
+      "description": "Generate list of all tasks to complete today based on urgency from both Airtable and Slack. Use for 'tasks for today' or 'urgent tasks'",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "get_urgent_tasks_today"},
+          "table_name": {"type": "string", "description": "Airtable table name", "default": "Videos"}
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "pm_get_qc_checklist",
+      "script": "execution/tools/pm_analytics.py",
+      "description": "Get QC/Quality check items and client/editor check status. Use for 'QC checks' or 'what needs review?'",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "get_qc_checklist"},
+          "table_name": {"type": "string", "description": "Airtable table name", "default": "Videos"}
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "pm_get_end_of_day_checklist",
+      "script": "execution/tools/pm_analytics.py",
+      "description": "Generate comprehensive end of day checklist with all pending items, attention needed, delayed tasks, and action items. Use for 'end of day checklist' or 'EOD summary'",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "get_end_of_day_checklist"},
+          "table_name": {"type": "string", "description": "Airtable table name", "default": "Videos"}
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "slack_airtable_crosscheck",
+      "script": "execution/slack_airtable_crosscheck.py",
+      "description": "Cross-check Slack activity against Airtable status. Finds: (1) Status discrepancies - editor says 'done' in Slack but Airtable not updated, (2) Urgent items with no Slack activity, (3) Communication gaps - editors with no recent messages. Use for 'is Slack in sync with Airtable?' or 'check for discrepancies' or 'who's gone silent?'",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "check": {"type": "string", "enum": ["all", "status", "urgent", "gaps"], "description": "Type of check to run", "default": "all"},
+          "hours": {"type": "number", "description": "Hours to look back for Slack activity", "default": 48}
+        },
+        "required": []
+      }
+    },
+    {
+      "name": "client_status_report",
+      "script": "execution/client_status_report.py",
+      "description": "Generate comprehensive client status and sentiment report. Combines Airtable video statuses with Slack channel sentiment analysis. Shows: (1) Client mood/sentiment (Happy, Concerned, Seeking Updates, Neutral), (2) Risk level (High/Medium/Low) based on overdue videos, negative messages, unanswered messages, (3) Video stats per client, (4) Notable messages needing attention. Use for 'how are clients feeling?' or 'client status report' or 'any unhappy clients?' or 'full project overview'",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "hours": {"type": "number", "description": "Hours to look back for Slack messages", "default": 72},
+          "client": {"type": "string", "description": "Filter to specific client name (optional)"}
+        },
+        "required": []
+      }
     }
   ],
+
+  "_note_constraints": "Constraints below are NOT enforced by the orchestrator - they're embedded in system_prompt instead.",
 
   "constraints": [
     "CONFIRMATION REQUIRED: Always ask for confirmation before making any changes (write, edit, execute, send)",
@@ -396,6 +549,8 @@
     "Explain your reasoning and approach",
     "If something fails, diagnose and suggest fixes"
   ],
+
+  "_note_outputs": "Output destinations not currently implemented.",
 
   "output_destinations": {
     "reports_sheet": "",

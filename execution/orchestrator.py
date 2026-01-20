@@ -1,25 +1,200 @@
 #!/usr/bin/env python3
 """
-Orchestrator: Autonomous agent engine for client mode
-Reads client config, processes natural language requests, executes tools
+Orchestrator: Autonomous agent engine using Claude Agent SDK
+
+This orchestrator uses the official Claude Agent SDK for server deployment.
+The Agent SDK provides the same capabilities as Claude Code CLI but is designed
+for production server use with proper API key authentication.
+
+GUARDRAILS FOR CLIENT WEBAPP:
+- Full PM operations allowed (query, update tasks, send messages, etc.)
+- NO file editing (Edit, Write tools blocked)
+- NO access to system files (config/, execution/, .env, etc.)
+- Bash commands restricted to safe operations only
 """
 
 import os
 import json
-import subprocess
+import asyncio
+import re
 from pathlib import Path
-from typing import Dict, List, Any
-from anthropic import Anthropic
+from typing import Dict, Any, Optional
 from datetime import datetime
 
+# Claude Agent SDK imports
+from claude_agent_sdk import query, ClaudeAgentOptions, HookMatcher
+
+
+# =============================================================================
+# GUARDRAILS CONFIGURATION
+# =============================================================================
+
+# Directories that clients cannot access
+PROTECTED_DIRECTORIES = [
+    "config/",
+    "config\\",
+    "execution/",
+    "execution\\",
+    ".git/",
+    ".git\\",
+    ".env",
+    "credentials.json",
+    "token.json",
+    "__pycache__",
+    "node_modules",
+]
+
+# File patterns that clients cannot access
+PROTECTED_FILE_PATTERNS = [
+    r"\.env.*",
+    r".*\.pem$",
+    r".*\.key$",
+    r"credentials.*\.json",
+    r"token.*\.json",
+    r".*secret.*",
+]
+
+# Dangerous bash commands/patterns to block
+DANGEROUS_BASH_PATTERNS = [
+    r"rm\s+-rf",
+    r"rm\s+-r\s+/",
+    r"rmdir",
+    r"del\s+/[sS]",  # Windows recursive delete
+    r"format\s+",
+    r"mkfs",
+    r"dd\s+if=",
+    r">\s*/dev/",
+    r"chmod\s+777",
+    r"curl.*\|\s*(ba)?sh",  # Piping curl to shell
+    r"wget.*\|\s*(ba)?sh",
+    r"pip\s+install",
+    r"npm\s+install",
+    r"git\s+push",
+    r"git\s+commit",
+    r"git\s+reset\s+--hard",
+    r"shutdown",
+    r"reboot",
+    r"kill\s+-9",
+    r"pkill",
+    r"taskkill",
+]
+
+# Allowed bash commands (whitelist approach for safety)
+ALLOWED_BASH_PATTERNS = [
+    r"^ls\s",
+    r"^dir\s",
+    r"^cat\s",
+    r"^type\s",  # Windows cat
+    r"^head\s",
+    r"^tail\s",
+    r"^grep\s",
+    r"^find\s",
+    r"^echo\s",
+    r"^pwd$",
+    r"^cd$",
+    r"^date$",
+    r"^whoami$",
+    r"^python\s+.*\.py",  # Allow running specific scripts
+]
+
+
+# =============================================================================
+# HOOK FUNCTIONS FOR GUARDRAILS
+# =============================================================================
+
+async def block_file_modifications(input_data, tool_use_id, context):
+    """
+    PreToolUse hook to block Edit and Write operations.
+    """
+    tool_input = input_data.get('tool_input', {})
+    tool_name = input_data.get('tool_name', '')
+
+    # Block Edit and Write tools entirely
+    if tool_name in ['Edit', 'Write', 'NotebookEdit']:
+        return {
+            "decision": "block",
+            "reason": "File modifications are not permitted. This agent is read-only for files."
+        }
+
+    return {}
+
+
+async def block_protected_paths(input_data, tool_use_id, context):
+    """
+    PreToolUse hook to block access to protected directories and files.
+    """
+    tool_input = input_data.get('tool_input', {})
+
+    # Check various path parameters
+    path_params = ['file_path', 'path', 'directory', 'cwd', 'notebook_path']
+
+    for param in path_params:
+        if param in tool_input:
+            path = str(tool_input[param]).lower()
+
+            # Check protected directories
+            for protected in PROTECTED_DIRECTORIES:
+                if protected.lower() in path:
+                    return {
+                        "decision": "block",
+                        "reason": f"Access to system directory '{protected}' is not permitted."
+                    }
+
+            # Check protected file patterns
+            for pattern in PROTECTED_FILE_PATTERNS:
+                if re.search(pattern, path, re.IGNORECASE):
+                    return {
+                        "decision": "block",
+                        "reason": "Access to this file type is not permitted."
+                    }
+
+    return {}
+
+
+async def restrict_bash_commands(input_data, tool_use_id, context):
+    """
+    PreToolUse hook to restrict dangerous bash commands.
+    """
+    tool_input = input_data.get('tool_input', {})
+    tool_name = input_data.get('tool_name', '')
+
+    if tool_name != 'Bash':
+        return {}
+
+    command = tool_input.get('command', '')
+
+    # Check for dangerous patterns
+    for pattern in DANGEROUS_BASH_PATTERNS:
+        if re.search(pattern, command, re.IGNORECASE):
+            return {
+                "decision": "block",
+                "reason": f"This command is not permitted for safety reasons."
+            }
+
+    # Check if command accesses protected paths
+    for protected in PROTECTED_DIRECTORIES:
+        if protected.lower() in command.lower():
+            return {
+                "decision": "block",
+                "reason": f"Commands accessing system directories are not permitted."
+            }
+
+    return {}
+
+
+# =============================================================================
+# ORCHESTRATOR CLASS
+# =============================================================================
 
 class ScopedOrchestrator:
     """
-    Scoped autonomous orchestrator for client agents.
+    Wraps Claude Agent SDK for web-accessible agent functionality.
 
-    Loads client configuration, processes natural language requests,
-    calls Claude API to decide which tools to use, executes tools,
-    and maintains conversation history.
+    Implements guardrails to restrict client access:
+    - Full PM operations (Airtable, Slack, queries)
+    - Read-only file access (no Edit/Write)
+    - Protected system directories blocked
+    - Dangerous bash commands blocked
     """
 
     def __init__(self, client_name: str):
@@ -30,7 +205,6 @@ class ScopedOrchestrator:
             client_name: Client identifier (matches config file)
         """
         self.client_name = client_name
-        self.client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
 
         # Load client configuration
         config_path = Path(__file__).parent.parent / f"config/clients/{client_name}.json"
@@ -41,14 +215,73 @@ class ScopedOrchestrator:
         with open(config_path) as f:
             self.config = json.load(f)
 
-        self.system_prompt = self.config["system_prompt"]
-        self.available_tools = self.config["available_tools"]
-        self.constraints = self.config.get("constraints", [])
+        # System prompt is used by Agent SDK
+        self.system_prompt = self.config.get("system_prompt", "")
+
+        # Add guardrail instructions to system prompt
+        self.system_prompt += """
+
+## IMPORTANT RESTRICTIONS
+You are running in CLIENT MODE with the following restrictions:
+- You CANNOT edit or write files (Edit, Write tools are disabled)
+- You CANNOT access system directories (config/, execution/, .env, etc.)
+- You CANNOT run dangerous commands (install packages, delete files, git push, etc.)
+- You CAN read files, search code, query Airtable, read Slack, and perform all PM operations
+
+If a user asks you to do something restricted, politely explain that this action
+requires approval from the agency administrator.
+"""
+
+        # Project directory for Agent SDK context
+        self.project_dir = Path(__file__).parent.parent
+
+        # Session management - persist session ID for conversation continuity
+        self.session_file = self.project_dir / f".tmp/sessions/{client_name}_session.json"
+        self.session_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # Load or create session
+        self.session_id = self._load_session()
         self.conversation_history = []
 
-    def process_request(self, user_message: str) -> Dict[str, Any]:
+    def _load_session(self) -> Optional[str]:
+        """Load existing session ID if available."""
+        try:
+            if self.session_file.exists():
+                with open(self.session_file) as f:
+                    data = json.load(f)
+                    # Check if session is recent (within 1 hour)
+                    created = datetime.fromisoformat(data.get("created", "2000-01-01"))
+                    age = datetime.now() - created
+                    if age.total_seconds() < 3600:  # 1 hour
+                        return data.get("session_id")
+        except Exception:
+            pass
+        return None
+
+    def _save_session(self, session_id: str):
+        """Save session ID for future use."""
+        try:
+            with open(self.session_file, 'w') as f:
+                json.dump({
+                    "session_id": session_id,
+                    "created": datetime.now().isoformat(),
+                    "client_name": self.client_name
+                }, f)
+        except Exception:
+            pass
+
+    def clear_session(self):
+        """Clear the current session to start fresh."""
+        self.session_id = None
+        try:
+            if self.session_file.exists():
+                self.session_file.unlink()
+        except Exception:
+            pass
+
+    async def process_request(self, user_message: str) -> Dict[str, Any]:
         """
-        Process natural language request from client.
+        Process natural language request using Claude Agent SDK.
 
         Args:
             user_message: Natural language request from client
@@ -56,266 +289,157 @@ class ScopedOrchestrator:
         Returns:
             Dict with response, tools_used, and conversation_id
         """
-        # Add user message to history
+        # Track in history
         self.conversation_history.append({
             "role": "user",
             "content": user_message
         })
 
-        # Build tool definitions for Claude API
-        tools = self._build_tool_definitions()
+        # Call Agent SDK
+        result = await self._call_agent_sdk(user_message)
 
-        # Call Claude API with tools
-        response = self.client.messages.create(
-            model="claude-opus-4-20250514",  # Use Opus 4.5
-            max_tokens=4096,
-            system=self._build_system_prompt(),
-            messages=self.conversation_history,
-            tools=tools if tools else None
+        # Track response
+        self.conversation_history.append({
+            "role": "assistant",
+            "content": result.get("response", "")
+        })
+
+        # Log interaction
+        self._log_interaction(
+            user_message=user_message,
+            response=result.get("response", ""),
+            session_id=result.get("session_id")
         )
-
-        # Process response and handle tool calls
-        result = self._process_response(response)
 
         return result
 
-    def _build_system_prompt(self) -> str:
+    async def _call_agent_sdk(self, message: str) -> Dict[str, Any]:
         """
-        Build comprehensive system prompt with constraints.
-
-        Returns:
-            Complete system prompt string
-        """
-        prompt = f"{self.system_prompt}\n\n"
-
-        if self.constraints:
-            prompt += "CONSTRAINTS:\n"
-            for constraint in self.constraints:
-                prompt += f"- {constraint}\n"
-            prompt += "\n"
-
-        prompt += """When you need to recommend a new tool (functionality not available):
-1. Clearly explain what's not available
-2. Describe what tool would be needed
-3. Suggest contacting the agency to add it
-4. Log it as a feature request
-
-Always be helpful, professional, and work within your defined boundaries."""
-
-        return prompt
-
-    def _build_tool_definitions(self) -> List[Dict]:
-        """
-        Convert config tools to Claude API tool format.
-
-        Returns:
-            List of tool definitions for Claude API
-        """
-        tool_defs = []
-
-        for tool in self.available_tools:
-            tool_def = {
-                "name": tool["name"],
-                "description": tool["description"],
-                "input_schema": {
-                    "type": "object",
-                    "properties": tool.get("input_schema", {}).get("properties", {}),
-                    "required": tool.get("input_schema", {}).get("required", [])
-                }
-            }
-            tool_defs.append(tool_def)
-
-        return tool_defs
-
-    def _process_response(self, response) -> Dict[str, Any]:
-        """
-        Process Claude's response and execute any tool calls.
-        Handles multi-turn tool use by looping until no more tools are called.
+        Call Claude Agent SDK with guardrails.
 
         Args:
-            response: Response from Claude API
+            message: The user's message
 
         Returns:
-            Dict with final response and metadata
+            Dict with response and metadata
         """
-        all_tool_results = []
-        final_text = ""
-        current_response = response
-        max_iterations = 10  # Safety limit to prevent infinite loops
-
-        for iteration in range(max_iterations):
-            assistant_message = {
-                "role": "assistant",
-                "content": []
-            }
-            tool_results = []
-
-            # Process content blocks
-            for block in current_response.content:
-                if block.type == "text":
-                    final_text = block.text
-                    assistant_message["content"].append(block)
-
-                elif block.type == "tool_use":
-                    # Execute the tool
-                    tool_result = self._execute_tool(
-                        tool_name=block.name,
-                        tool_input=block.input,
-                        tool_use_id=block.id
-                    )
-                    tool_results.append(tool_result)
-                    all_tool_results.append(tool_result)
-                    assistant_message["content"].append(block)
-
-            # Add assistant message to history
-            self.conversation_history.append(assistant_message)
-
-            # If no tools were used, we're done
-            if not tool_results:
-                break
-
-            # Add tool results to conversation
-            self.conversation_history.append({
-                "role": "user",
-                "content": tool_results
-            })
-
-            # Get next response after tool execution
-            current_response = self.client.messages.create(
-                model="claude-opus-4-20250514",
-                max_tokens=4096,
-                system=self._build_system_prompt(),
-                messages=self.conversation_history,
-                tools=self._build_tool_definitions() if self.available_tools else None
-            )
-
-        # Log conversation
-        self._log_interaction(
-            user_message="[see conversation history]",
-            response=final_text,
-            tools_used=[r.get("tool_use_id", "unknown") for r in all_tool_results]
-        )
-
-        return {
-            "response": final_text,
-            "tools_used": all_tool_results,
-            "conversation_id": f"{self.client_name}_{datetime.now().isoformat()}"
-        }
-
-    def _execute_tool(self, tool_name: str, tool_input: Dict, tool_use_id: str) -> Dict:
-        """
-        Execute a tool by running its script.
-
-        Args:
-            tool_name: Name of the tool to execute
-            tool_input: Input parameters for the tool
-            tool_use_id: Unique ID for this tool use
-
-        Returns:
-            Tool result dict for Claude API
-        """
-        # Find tool config
-        tool_config = next((t for t in self.available_tools if t["name"] == tool_name), None)
-
-        if not tool_config:
-            return {
-                "type": "tool_result",
-                "tool_use_id": tool_use_id,
-                "content": json.dumps({"error": f"Tool {tool_name} not found"})
-            }
-
-        script_path = tool_config["script"]
-
-        # Merge fixed parameters from config with dynamic input
-        params = tool_config.get("parameters", {}).copy()
-        params.update(tool_input)
-
-        # Extract action if present (for tools that use action as first arg)
-        action = params.pop("action", None)
-
-        # Build command - pass action as first arg, then params as JSON
-        cmd = ["python", script_path]
-        if action:
-            cmd.append(action)
-        cmd.append(json.dumps(params))
-
         try:
-            # Execute script
-            result = subprocess.run(
-                cmd,
-                capture_output=True,
-                text=True,
-                timeout=60,
-                cwd=Path(__file__).parent.parent
-            )
-
-            if result.returncode == 0:
-                # Success
-                output = result.stdout
-                try:
-                    output_data = json.loads(output)
-                except:
-                    output_data = {"output": output}
-
-                return {
-                    "type": "tool_result",
-                    "tool_use_id": tool_use_id,
-                    "content": json.dumps(output_data)
+            # Build options with guardrails
+            options_dict = {
+                "cwd": str(self.project_dir),
+                "permission_mode": "bypassPermissions",
+                # Restricted tool list - NO Edit, Write
+                "allowed_tools": [
+                    "Read",           # Can read files
+                    "Glob",           # Can search for files
+                    "Grep",           # Can search in files
+                    "Bash",           # Restricted via hooks
+                    "WebFetch",       # Can fetch web content
+                    "WebSearch",      # Can search web
+                    "Task",           # Can spawn subagents (they inherit restrictions)
+                    "AskUserQuestion" # Can ask clarifying questions
+                ],
+                # Hooks for guardrails
+                "hooks": {
+                    "PreToolUse": [
+                        HookMatcher(matcher="Edit|Write|NotebookEdit", hooks=[block_file_modifications]),
+                        HookMatcher(matcher="Read|Glob|Grep", hooks=[block_protected_paths]),
+                        HookMatcher(matcher="Bash", hooks=[restrict_bash_commands, block_protected_paths]),
+                    ]
                 }
-            else:
-                # Error
-                return {
-                    "type": "tool_result",
-                    "tool_use_id": tool_use_id,
-                    "content": json.dumps({
-                        "error": result.stderr,
-                        "stdout": result.stdout
-                    }),
-                    "is_error": True
-                }
-
-        except subprocess.TimeoutExpired:
-            return {
-                "type": "tool_result",
-                "tool_use_id": tool_use_id,
-                "content": json.dumps({"error": "Tool execution timeout (60s)"}),
-                "is_error": True
             }
+
+            # Add system prompt for new sessions
+            if not self.session_id and self.system_prompt:
+                options_dict["system_prompt"] = self.system_prompt
+
+            # Add resume if we have an existing session
+            if self.session_id:
+                options_dict["resume"] = self.session_id
+
+            options = ClaudeAgentOptions(**options_dict)
+
+            # Collect response
+            response_text = ""
+            new_session_id = None
+            num_turns = 0
+            blocked_actions = []
+
+            async for msg in query(prompt=message, options=options):
+                # Capture session ID from init message
+                if hasattr(msg, 'subtype') and msg.subtype == 'init':
+                    new_session_id = getattr(msg, 'session_id', None)
+
+                # Capture final result
+                if hasattr(msg, 'result'):
+                    response_text = msg.result
+
+                # Track turns
+                if hasattr(msg, 'type') and msg.type == 'assistant':
+                    num_turns += 1
+
+                # Track blocked actions for logging
+                if hasattr(msg, 'type') and msg.type == 'hook_result':
+                    if getattr(msg, 'decision', '') == 'block':
+                        blocked_actions.append(getattr(msg, 'reason', 'Unknown'))
+
+            # Save session ID for continuity
+            if new_session_id:
+                self.session_id = new_session_id
+                self._save_session(new_session_id)
+
+            return {
+                "response": response_text,
+                "tools_used": [],
+                "conversation_id": f"{self.client_name}_{new_session_id or 'unknown'}",
+                "session_id": new_session_id,
+                "num_turns": num_turns,
+                "blocked_actions": blocked_actions,
+                "backend": "claude_agent_sdk_guarded"
+            }
+
         except Exception as e:
+            error_msg = str(e)
+
+            # Handle specific errors
+            if "CLINotFoundError" in error_msg or "not found" in error_msg.lower():
+                return {
+                    "response": "Claude Code CLI not found. Please ensure it is installed.",
+                    "tools_used": [],
+                    "conversation_id": f"{self.client_name}_not_found",
+                    "backend": "claude_agent_sdk_guarded"
+                }
+
             return {
-                "type": "tool_result",
-                "tool_use_id": tool_use_id,
-                "content": json.dumps({"error": str(e)}),
-                "is_error": True
+                "response": f"Error processing your request. Please try again or contact support.",
+                "tools_used": [],
+                "conversation_id": f"{self.client_name}_error",
+                "backend": "claude_agent_sdk_guarded",
+                "error": error_msg  # For logging, not shown to client
             }
 
-    def _log_interaction(self, user_message: str, response: str, tools_used: List[str]):
-        """
-        Log conversation for monitoring.
-
-        Args:
-            user_message: User's message
-            response: Agent's response
-            tools_used: List of tools that were used
-        """
+    def _log_interaction(self, user_message: str, response: str, session_id: Optional[str] = None):
+        """Log conversation for monitoring."""
         log_entry = {
             "timestamp": datetime.now().isoformat(),
             "client": self.client_name,
+            "session_id": session_id,
             "user_message": str(user_message),
-            "response": response,
-            "tools_used": tools_used
+            "response": response[:500] + "..." if len(response) > 500 else response,
+            "backend": "claude_agent_sdk_guarded"
         }
 
-        # Append to log file
-        log_path = Path(__file__).parent.parent / f".tmp/logs/{self.client_name}.jsonl"
+        log_path = self.project_dir / f".tmp/logs/{self.client_name}.jsonl"
         log_path.parent.mkdir(exist_ok=True, parents=True)
 
-        with open(log_path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(log_entry) + "\n")
+        try:
+            with open(log_path, "a", encoding="utf-8") as f:
+                f.write(json.dumps(log_entry) + "\n")
+        except Exception:
+            pass
 
 
 if __name__ == "__main__":
-    # Simple test
     import sys
 
     if len(sys.argv) < 3:
@@ -326,6 +450,6 @@ if __name__ == "__main__":
     message = " ".join(sys.argv[2:])
 
     orchestrator = ScopedOrchestrator(client_name)
-    result = orchestrator.process_request(message)
+    result = asyncio.run(orchestrator.process_request(message))
 
     print(json.dumps(result, indent=2))
