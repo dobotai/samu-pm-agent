@@ -1,13 +1,22 @@
 # Environment variables and API keys
 .env
+.env.backup
+.env.template.filled
 
 # Google OAuth credentials
 credentials.json
 token.json
 
+# Client-specific credentials
+config/clients/*.env
+*.key
+*.pem
+
 # Intermediate/temporary files
 .tmp/
 *.tmp
+tmpclaude-*
+nul
 
 # Python
 __pycache__/
