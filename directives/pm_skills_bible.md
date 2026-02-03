@@ -133,11 +133,12 @@ Bad: "Some issues with the video, please fix."
 
 **Assignment Message:**
 Include everything they need:
-- Video ID
-- Client name
+- Client name + Video Number (e.g., "Taylor Video #11")
 - Deadline
 - Link to assets
 - Any special instructions
+
+**NEVER use the raw Video ID field from Airtable in any communication.**
 
 ### Client Communication
 
@@ -189,27 +190,29 @@ No open loops / [specific items need morning attention].
 
 **Actionable:** Tells the PM exactly what to do next
 ```
-VALUABLE: "Video 1945 (Dan) needs revisions implemented by Suhaib. Follow up in #suhaib-editing asking for ETA."
-NOISE: "Video 1945 has some issues."
+VALUABLE: "Dan Video #7 needs revisions implemented by Suhaib. Follow up in #suhaib-editing asking for ETA."
+NOISE: "Dan Video #7 has some issues."
 ```
 
 **Prioritized:** Helps PM know what to do FIRST
 ```
-VALUABLE: "3 videos need QC (priority #1): 1657, 1933, 1945. Then schedule these 3 approved videos: 1720, 1722, 1879."
+VALUABLE: "3 videos need QC (priority #1): Taylor Video #11, Nicolas Video #36, Dan Video #8. Then schedule these 3 approved videos: Christian Video #4, Josh Video #12, Sam Video #9."
 NOISE: "There are several videos in various states."
 ```
 
 **Context-Aware:** Understands the actual situation from Slack
 ```
-VALUABLE: "Video 1722 (KD) shows overdue but client needs YouTube verification first - this is a client blocker, not our fault."
-NOISE: "Video 1722 is overdue by 21 days."
+VALUABLE: "KD Video #3 shows overdue but client needs YouTube verification first - this is a client blocker, not our fault."
+NOISE: "KD Video #3 is overdue by 21 days."
 ```
 
-**Specific:** Names, IDs, deadlines, channels
+**Specific:** Names, deadlines, channels
 ```
 VALUABLE: "Sakib hasn't responded in #sakib-editing since Jan 20. Send WhatsApp: 'Hey, this is [name] from KS Media...'"
 NOISE: "Some editors need follow-up."
 ```
+
+**NEVER use raw Video ID from Airtable** - always use "ClientName Video #X" format.
 
 ### What Makes a Response NOISE
 
@@ -333,13 +336,15 @@ Hey, we're paying you today. Please send over how much $ we owe you and a breakd
 
 ### Video Status Analysis
 ```
-**Video [ID] - [Client]**
+**[Client] Video #[Number]**
 - Status: [status]
 - Editor: [name]
 - Deadline: [date] ([on time/X days overdue])
 - Blocker: [us/client/none]
 - What's happening: [1-2 sentence summary from Slack context]
 - Action needed: [specific next step or "none - waiting on client"]
+
+Example: "Taylor Video #11" NOT "Video ID: VID-2024-0847"
 ```
 
 ### Editor Follow-up Recommendation
@@ -361,7 +366,8 @@ Hey, we're paying you today. Please send over how much $ we owe you and a breakd
 3. **Never mark videos as done without verification**
 4. **Never ignore Slack context** - raw Airtable data tells an incomplete story
 5. **Never treat all overdue videos as urgent** - check if it's a client blocker first
-6. **Never give generic advice** - always be specific with names, IDs, actions
+6. **Never give generic advice** - always be specific with names, actions
+7. **NEVER display the Video ID field** - always use "ClientName Video #X" format (e.g., "Taylor Video #11", not "VID-2024-0847")
 
 ---
 

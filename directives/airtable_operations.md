@@ -18,7 +18,8 @@ Standard operating procedures for interacting with the KS Media Airtable base. T
 
 3. **Videos** (42 fields)
    - Video production tracking
-   - Fields: Video ID, Client, Format, Editing Status, Assigned Editor, Deadlines, etc.
+   - Fields: Video ID, Client, Video Number, Format, Editing Status, Assigned Editor, Deadlines, etc.
+   - **REPORTING RULE:** When displaying videos to users, ALWAYS use "ClientName Video #X" format (using Client + Video Number fields). NEVER display the raw "Video ID" field.
 
 4. **SOP Bank** (9 fields)
    - Standard operating procedures repository
@@ -91,8 +92,8 @@ python execution/airtable_read.py "Clients" --output summary
 
 **Usage:**
 ```bash
-# Create a new video record
-python execution/airtable_write.py "Videos" '{"Video ID": 1801, "Client": ["recXXX"], "Format": "Long-Form"}'
+# Create a new video record (Video ID is internal, use Client + Video Number for display)
+python execution/airtable_write.py "Videos" '{"Client": ["recXXX"], "Video Number": 12, "Format": "Long-Form"}'
 
 # Create a team member
 python execution/airtable_write.py "Team" '{"Name": "John Doe", "Role": "Editor", "Email": "john@example.com"}'
@@ -145,14 +146,16 @@ python execution/airtable_update.py "Videos" "recXXX" '{"Editing Status": "Done"
 
 ## Common Workflows
 
+> **IMPORTANT DISPLAY RULE:** When showing video data to users, NEVER display the "Video ID" field. Always combine "Client" + "Video Number" fields to show videos as "ClientName Video #X" (e.g., "Taylor Video #11"). The Video ID is for internal database use only.
+
 ### Workflow 1: Check Video Pipeline Status
 **Goal:** See all videos currently in progress
 
 ```bash
-# Get videos not yet completed
+# Get videos not yet completed (include Video Number for display)
 python execution/airtable_read.py "Videos" \
   --filter "NOT(Editing Status='100 - Scheduled - DONE')" \
-  --fields "Video ID,Client,Editing Status,Assigned Editor,Deadline" \
+  --fields "Client,Video Number,Editing Status,Assigned Editor,Deadline" \
   --max-records 50
 ```
 
@@ -168,7 +171,7 @@ python execution/airtable_read.py "Team" \
 # Then use that ID to filter Videos
 python execution/airtable_read.py "Videos" \
   --filter "FIND('rec73fQu0xxq4F9Df', ARRAYJOIN({Assigned Editor}))" \
-  --fields "Video ID,Editing Status,Deadline"
+  --fields "Client,Video Number,Editing Status,Deadline"
 ```
 
 ### Workflow 3: Update Video to Next Stage
@@ -191,10 +194,10 @@ python execution/airtable_update.py "Videos" "recXXX" \
 # First get client's record ID
 python execution/airtable_read.py "Clients" --output summary
 
-# Then filter videos by client
+# Then filter videos by client (use Client + Video Number for display, never Video ID)
 python execution/airtable_read.py "Videos" \
   --filter "FIND('rec2TTPeqjcygT0Lz', ARRAYJOIN(Client))" \
-  --fields "Video ID,Video Number,Editing Status,Deadline"
+  --fields "Client,Video Number,Editing Status,Deadline"
 ```
 
 ## Error Handling
