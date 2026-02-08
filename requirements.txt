@@ -36,3 +36,6 @@ slack-sdk>=3.23.0
 
 # Airtable Integration
 pyairtable>=2.1.0
+
+# Scheduling
+apscheduler>=3.10.0

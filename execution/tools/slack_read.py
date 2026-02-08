@@ -8,8 +8,19 @@ import json
 import os
 import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
+
+# Load environment variables
+try:
+    from dotenv import load_dotenv
+    project_root = Path(__file__).parent.parent.parent
+    env_path = project_root / ".env"
+    if env_path.exists():
+        load_dotenv(env_path)
+except ImportError:
+    pass
 
 
 def main():
@@ -131,6 +142,46 @@ def main():
                 "query": query
             }))
 
+        elif action == "read_thread":
+            # Read all replies in a thread
+            channel_id = params.get("channel_id") or params.get("arg1")
+            thread_ts = params.get("thread_ts") or params.get("arg2")
+            if not channel_id or not thread_ts:
+                print(json.dumps({
+                    "error": "Missing channel_id and/or thread_ts parameter"
+                }))
+                sys.exit(1)
+
+            result = client.conversations_replies(
+                channel=channel_id,
+                ts=thread_ts
+            )
+
+            messages = []
+            for msg in result.get("messages", []):
+                user_name = "Unknown"
+                if "user" in msg:
+                    try:
+                        user_info = client.users_info(user=msg["user"])
+                        user_name = user_info["user"].get("real_name", user_info["user"].get("name", "Unknown"))
+                    except:
+                        user_name = msg["user"]
+
+                messages.append({
+                    "text": msg.get("text", ""),
+                    "user": user_name,
+                    "timestamp": msg["ts"],
+                    "formatted_time": datetime.fromtimestamp(float(msg["ts"])).strftime("%Y-%m-%d %H:%M:%S"),
+                    "is_parent": msg["ts"] == thread_ts
+                })
+
+            print(json.dumps({
+                "messages": messages,
+                "count": len(messages),
+                "channel_id": channel_id,
+                "thread_ts": thread_ts
+            }))
+
         elif action == "list_users":
             # List all users in workspace
             result = client.users_list()
@@ -152,7 +203,7 @@ def main():
         else:
             print(json.dumps({
                 "error": f"Unknown action: {action}",
-                "available_actions": ["list_channels", "read_messages", "search_messages", "list_users"]
+                "available_actions": ["list_channels", "read_messages", "read_thread", "search_messages", "list_users"]
             }))
             sys.exit(1)
 

@@ -4,12 +4,13 @@ Slack Read Channel Tool - Reads messages from a Slack channel
 Part of DOEBI execution layer (deterministic tool)
 
 Usage:
-    python slack_read_channel.py <channel> [--limit <num>] [--since <hours>]
+    python slack_read_channel.py <channel> [--limit <num>] [--since <hours>] [--no-threads]
 
 Examples:
     python slack_read_channel.py "#project-manager"
     python slack_read_channel.py "C071NUME7EC" --limit 50
     python slack_read_channel.py "#editor-ananda" --since 24
+    python slack_read_channel.py "#jamal-client" --since 48 --no-threads
 """
 
 import os
@@ -24,7 +25,7 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-def read_slack_channel(channel, limit=100, since_hours=None):
+def read_slack_channel(channel, limit=100, since_hours=None, include_threads=True, max_threads=50):
     """
     Read messages from a Slack channel
 
@@ -32,9 +33,11 @@ def read_slack_channel(channel, limit=100, since_hours=None):
         channel: Channel ID (C...) or channel name (#channel)
         limit: Maximum number of messages to retrieve
         since_hours: Only get messages from last N hours
+        include_threads: Fetch thread replies for messages with replies (default: True)
+        max_threads: Maximum number of threads to fetch replies for (default: 50)
 
     Returns:
-        List of messages with metadata
+        List of messages with metadata (and thread_replies if include_threads=True)
     """
     # Get user token from environment (for full channel access)
     user_token = os.getenv('SLACK_USER_TOKEN')
@@ -114,8 +117,48 @@ def read_slack_channel(channel, limit=100, since_hours=None):
                 'timestamp': msg.get('ts'),
                 'datetime': dt.strftime('%Y-%m-%d %H:%M:%S'),
                 'thread_ts': msg.get('thread_ts'),
-                'reply_count': msg.get('reply_count', 0)
+                'reply_count': msg.get('reply_count', 0),
+                'thread_replies': []
             })
+
+        # Fetch thread replies for messages that have them
+        if include_threads:
+            threads_fetched = 0
+            for fmt_msg, raw_msg in zip(formatted_messages, messages):
+                if raw_msg.get('reply_count', 0) > 0 and threads_fetched < max_threads:
+                    try:
+                        thread_result = client.conversations_replies(
+                            channel=channel,
+                            ts=raw_msg['ts']
+                        )
+                        # Skip first message (it's the parent)
+                        for reply in thread_result.get('messages', [])[1:]:
+                            reply_user_id = reply.get('user', 'unknown')
+                            if reply_user_id not in user_cache and reply_user_id != 'unknown':
+                                try:
+                                    reply_user_info = client.users_info(user=reply_user_id)
+                                    user_cache[reply_user_id] = {
+                                        'name': reply_user_info['user'].get('real_name', 'Unknown'),
+                                        'username': reply_user_info['user'].get('name', 'unknown')
+                                    }
+                                except:
+                                    user_cache[reply_user_id] = {'name': 'Unknown', 'username': reply_user_id}
+
+                            reply_user_data = user_cache.get(reply_user_id, {'name': 'Unknown', 'username': 'unknown'})
+                            reply_ts = float(reply.get('ts', 0))
+                            reply_dt = datetime.fromtimestamp(reply_ts)
+
+                            fmt_msg['thread_replies'].append({
+                                'text': reply.get('text', ''),
+                                'user': reply_user_data['name'],
+                                'username': reply_user_data['username'],
+                                'user_id': reply_user_id,
+                                'timestamp': reply.get('ts'),
+                                'datetime': reply_dt.strftime('%Y-%m-%d %H:%M:%S'),
+                            })
+                        threads_fetched += 1
+                    except SlackApiError:
+                        pass
 
         return formatted_messages
 
@@ -139,6 +182,8 @@ Examples:
                        help='Maximum number of messages to retrieve (default: 100)')
     parser.add_argument('--since', type=float, dest='since_hours',
                        help='Only get messages from last N hours')
+    parser.add_argument('--no-threads', action='store_true', default=False,
+                       help='Skip fetching thread replies (faster)')
     parser.add_argument('--output', choices=['json', 'summary'], default='json',
                        help='Output format (default: json)')
 
@@ -148,18 +193,25 @@ Examples:
         messages = read_slack_channel(
             channel=args.channel,
             limit=args.limit,
-            since_hours=args.since_hours
+            since_hours=args.since_hours,
+            include_threads=not args.no_threads
         )
 
         if args.output == 'json':
             print(json.dumps(messages, indent=2))
         else:
             # Summary output
-            print(f"Found {len(messages)} messages in {args.channel}\n")
+            total_thread_replies = sum(len(m.get('thread_replies', [])) for m in messages)
+            print(f"Found {len(messages)} messages in {args.channel}")
+            if total_thread_replies:
+                print(f"  ({total_thread_replies} thread replies across {sum(1 for m in messages if m.get('thread_replies'))} threads)")
+            print()
             for msg in messages[:10]:
                 print(f"[{msg['datetime']}] {msg['user']}: {msg['text'][:100]}")
                 if len(msg['text']) > 100:
                     print("...")
+                for reply in msg.get('thread_replies', []):
+                    print(f"  -> [{reply['datetime']}] {reply['user']}: {reply['text'][:100]}")
                 print()
             if len(messages) > 10:
                 print(f"... and {len(messages) - 10} more messages")

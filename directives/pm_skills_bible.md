@@ -300,15 +300,19 @@ Hey, we're paying you today. Please send over how much $ we owe you and a breakd
 4. Check all Slack channels:
    - Editor channels: anyone waiting for input? missed check-ins?
    - Client channels: any new recordings? questions?
-5. Create priority list
-6. Start executing
+5. **Run Slack Task Scanner** (`slack_task_scanner_extract`) to catch buried tasks
+   - Review untracked tasks that aren't in Airtable
+   - Add any missed items to your priority list
+6. Create priority list
+7. Start executing
 
 ### Logout Routine
 1. Check Airtable for anything missed
 2. Check all Slack channels for open items
-3. Send proper follow-ups where needed
-4. Triple-check nothing is missed
-5. Send checkout message to Samu with status
+3. **Run Slack Task Scanner** (`slack_task_scanner_untracked`) to catch anything missed during the day
+4. Send proper follow-ups where needed
+5. Triple-check nothing is missed
+6. Send checkout message to Samu with status
 
 ---
 
@@ -371,7 +375,39 @@ Example: "Taylor Video #11" NOT "Video ID: VID-2024-0847"
 
 ---
 
-## 10. Success Metrics
+## 10. Slack Task Scanner (Deep Scan)
+
+The task scanner uses Claude to read Slack conversations and extract ALL tasks - not just messages with "urgent" or "asap", but casual requests, implied tasks, and blockers that get buried.
+
+### When to Use
+- **Morning scan**: Run at start of day to catch tasks from overnight
+- **End of day**: Run to make sure nothing was missed
+- **"What are we missing?"**: When you suspect tasks fell through cracks
+- **After busy periods**: When lots of Slack activity happened
+
+### Tool Commands
+| Command | Purpose | Cost |
+|---------|---------|------|
+| `slack_task_scanner_extract` | Full scan of all channels | ~$0.15 |
+| `slack_task_scanner_extract` with `channels` param | Scan specific channels only | ~$0.01/channel |
+| `slack_task_scanner_extract` with `dry_run: true` | Preview message counts, no analysis | Free |
+| `slack_task_scanner_untracked` | Only tasks NOT in Airtable | ~$0.15 |
+
+### What It Catches That Keywords Miss
+- "can you send over info about how you edit for shizzle?" → Task for editor
+- "make sure to wrap up tyler vid first" → Prioritization instruction
+- "I don't think I can finish this video in 4 days" → Blocker needing reassignment
+- "By when do you need these images?" → Client waiting for answer
+- "when are you sending final nicolas?" → ETA request / follow-up needed
+
+### Quick Scan vs. Deep Scan
+- **Quick scan** (free): `pm_get_attention_needed` + `pm_get_unfollowed_messages` = keyword-based, fast
+- **Deep scan** (~$0.15): `slack_task_scanner_extract` = LLM-powered, catches everything
+- Use quick scan for routine checks, deep scan 1-2x per day
+
+---
+
+## 11. Success Metrics
 
 The agent is doing well if:
 - PM knows exactly what to do first thing in the morning
@@ -386,3 +422,4 @@ The agent is failing if:
 - Client blockers are flagged as urgent crises
 - Generic advice is given instead of specific actions
 - Context from Slack is ignored
+- Tasks buried in Slack conversation go undetected

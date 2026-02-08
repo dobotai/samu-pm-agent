@@ -1,0 +1,69 @@
+{
+  "timezone": "US/Eastern",
+  "automations": [
+    {
+      "id": "simon_daily_summary",
+      "name": "Simon Daily Summary",
+      "description": "Gathers Slack intelligence and sends a prioritized summary DM to Simon",
+      "enabled": true,
+      "schedule": {
+        "times": ["09:30", "12:15", "15:00"],
+        "days": "mon-fri"
+      },
+      "steps": [
+        {
+          "id": "scan_tasks",
+          "tool": "execution/tools/slack_task_scanner.py",
+          "cli_pattern": "action_json",
+          "action": "extract_tasks",
+          "params": {"hours": 6},
+          "description": "LLM-powered scan for tasks across all Slack channels"
+        },
+        {
+          "id": "read_pm_channel",
+          "tool": "execution/slack_read_channel.py",
+          "cli_pattern": "argparse",
+          "params": {"channel": "#project-manager", "--since": "6", "--limit": "50"},
+          "description": "Read recent messages from #project-manager"
+        },
+        {
+          "id": "attention_needed",
+          "tool": "execution/tools/pm_analytics.py",
+          "cli_pattern": "action_json",
+          "action": "get_attention_needed",
+          "params": {"hours": 6},
+          "description": "Find messages needing immediate attention"
+        },
+        {
+          "id": "unfollowed_messages",
+          "tool": "execution/tools/pm_analytics.py",
+          "cli_pattern": "action_json",
+          "action": "get_unfollowed_messages",
+          "params": {"hours": 6},
+          "description": "Find unanswered messages"
+        },
+        {
+          "id": "generate_summary",
+          "tool": "execution/tools/summary_generator.py",
+          "cli_pattern": "action_json",
+          "action": "generate",
+          "params": {
+            "input_steps": ["scan_tasks", "read_pm_channel", "attention_needed", "unfollowed_messages"],
+            "recipient_name": "Simon"
+          },
+          "description": "Generate human-readable summary via Claude"
+        },
+        {
+          "id": "send_dm",
+          "tool": "execution/tools/slack_write.py",
+          "cli_pattern": "positional",
+          "action": "send_dm",
+          "params": {
+            "args": ["${SIMON_SLACK_USER_ID}", "${steps.generate_summary.summary}"]
+          },
+          "description": "Send summary DM to Simon"
+        }
+      ]
+    }
+  ]
+}
