@@ -293,7 +293,16 @@ Also, use Opus-4.6 for everything while building. It came out a few days ago and
 
 ## PM Workflow — Responding to Simon
 
-Simon is the PM. He uses Claude Code as his daily operations tool. When he asks questions, run the right script and present the raw output. Do not reformat, summarize, or add commentary unless he asks.
+Simon is the PM. He uses Claude Code as his daily operations tool.
+
+### GOLDEN RULE FOR ALL REPORTS
+When Simon asks for ANY report, follow this exact procedure:
+1. Run the script with `2>NUL` (suppress stderr progress messages)
+2. Take the stdout and output it as your response text — this is what Simon sees
+3. Do NOT add ANY text before the output (no "Here's the report:", no "Running...", nothing)
+4. Do NOT add ANY text after the output (no summary, no highlights, no commentary)
+5. The script output IS your entire response
+6. Only add commentary if Simon explicitly asks a follow-up question about the data
 
 ### Editor Task Report
 
@@ -312,13 +321,7 @@ This outputs a prioritized action report grouped by what Simon needs to do:
 - **IN PROGRESS** — With editors, not yet submitted (status 41/50)
 - **SILENT EDITORS** — No Slack activity in scan window
 
-**CRITICAL: Present the script output exactly as printed.**
-- Show the FULL raw markdown output with ALL tables
-- Do NOT summarize, reformat, or strip sections
-- Do NOT say "here's a summary" or condense the data
-- Simon needs to see the actual table data to make decisions
-
-**Exception:** If Simon explicitly asks for a summary, then summarize. Otherwise, always show full output.
+Follow the GOLDEN RULE above — output only, no commentary.
 
 **Variations:**
 - Specific editor: `--editor sakib`
@@ -349,13 +352,7 @@ This scans all `*-client` Slack channels and cross-references Airtable video dat
 - **HEALTHY** — Low risk, active conversations
 - **QUIET** — No messages in scan window
 
-**CRITICAL: Present the script output exactly as printed.**
-- Show the FULL raw markdown output with ALL tables
-- Do NOT summarize, reformat, or strip sections
-- Do NOT say "here's a summary" or condense the data
-- Simon needs to see ALL client rows with Ball/Mood/Risk columns
-
-**Exception:** If the report has 50+ clients and becomes unreadable, you may show full output + brief summary. Otherwise, always show full output.
+Follow the GOLDEN RULE above — output only, no commentary.
 
 **Variations:**
 - Specific client: `--client Christian`
@@ -376,7 +373,7 @@ This cross-references Slack editor channels with Airtable to find:
 - **Communication gaps** — Editor channels with active videos but zero messages
 - **Deliverables** — Monthly video delivery count vs client package commitment
 
-Present the script output exactly as printed.
+Follow the GOLDEN RULE above — output only, no commentary.
 
 **Variations:**
 - Status check only: `--check status`
@@ -399,7 +396,7 @@ This generates a structured end-of-day message for Samu with:
 - **In progress** — Current pipeline grouped by status
 - **Needs morning attention** — QC items pending, clients waiting 48h+
 
-Present the script output exactly as printed. Simon can copy it to Samu's DM.
+Follow the GOLDEN RULE above — output only, no commentary. Simon copies it to Samu's DM.
 
 **Variations:**
 - JSON output: `--output json`
