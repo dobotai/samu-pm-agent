@@ -25,6 +25,8 @@ import requests
 from slack_sdk import WebClient
 from slack_sdk.errors import SlackApiError
 
+from utils import format_video_ref, get_client_map, resolve_editor_name
+
 # Load environment variables from .env file
 try:
     from dotenv import load_dotenv
@@ -60,6 +62,19 @@ class PMAnalytics:
 
         # Cache for Slack users
         self._user_cache = {}
+
+        # Cache for Airtable lookups (lazy-loaded)
+        self._client_map = None
+        self._editor_map = None
+
+    def _get_client_map(self) -> Dict[str, str]:
+        """Get {record_id: client_name} map, cached after first call."""
+        if self._client_map is None:
+            self._client_map = get_client_map(
+                api_key=self.airtable_api_key,
+                base_id=self.airtable_base_id,
+            )
+        return self._client_map
 
     # ==========================================================================
     # SLACK HELPERS
@@ -236,31 +251,12 @@ class PMAnalytics:
                 "Unknown"
             )
 
-            # Video ID or name
+            # Video display name — always "ClientName Video #X"
+            name = format_video_ref(fields, self._get_client_map())
             video_id = fields.get("Video ID")
-            name = (
-                fields.get("Name") or
-                fields.get("Title") or
-                fields.get("Project") or
-                fields.get("Video") or
-                fields.get("Task") or
-                (f"Video #{video_id}" if video_id else None) or
-                "Unnamed"
-            )
 
             # Editor/Assignee - handle linked records
-            editor_name = fields.get("Editor's Name")
-            if isinstance(editor_name, list):
-                editor_name = editor_name[0] if editor_name else None
-
-            assignee = (
-                editor_name or
-                fields.get("Assignee") or
-                fields.get("Assigned To") or
-                fields.get("Owner") or
-                fields.get("Assigned Editor") or
-                None
-            )
+            assignee = resolve_editor_name(fields)
 
             # Client info
             client = fields.get("Client")
@@ -434,19 +430,9 @@ class PMAnalytics:
 
             days_overdue = (today - deadline).days
 
-            name = (
-                fields.get("Name") or
-                fields.get("Title") or
-                fields.get("Task") or
-                "Unnamed"
-            )
+            name = format_video_ref(fields, self._get_client_map())
 
-            assignee = (
-                fields.get("Assignee") or
-                fields.get("Assigned To") or
-                fields.get("Owner") or
-                None
-            )
+            assignee = resolve_editor_name(fields)
 
             delayed.append({
                 "id": record["id"],
@@ -713,18 +699,9 @@ class PMAnalytics:
                 "normal"
             )
 
-            name = (
-                fields.get("Name") or
-                fields.get("Title") or
-                fields.get("Task") or
-                "Unnamed"
-            )
+            name = format_video_ref(fields, self._get_client_map())
 
-            assignee = (
-                fields.get("Assignee") or
-                fields.get("Assigned To") or
-                None
-            )
+            assignee = resolve_editor_name(fields)
 
             # Determine urgency
             urgency_score = 0
@@ -843,19 +820,11 @@ class PMAnalytics:
             # Combine statuses for checking
             combined_status = f"{editing_status} {thumbnail_status}"
 
-            # Get video name
-            video_id = fields.get("Video ID")
-            name = (
-                fields.get("Name") or
-                fields.get("Title") or
-                (f"Video #{video_id}" if video_id else None) or
-                "Unnamed"
-            )
+            # Video display name — always "ClientName Video #X"
+            name = format_video_ref(fields, self._get_client_map())
 
             # Get editor info
-            editor_name = fields.get("Editor's Name")
-            if isinstance(editor_name, list):
-                editor_name = editor_name[0] if editor_name else None
+            editor_name = resolve_editor_name(fields)
 
             # QC items - videos needing quality check
             qc_keywords = ["qc", "review", "check", "internal"]

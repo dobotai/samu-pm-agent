@@ -64,6 +64,238 @@
           "description": "Send summary DM to Simon"
         }
       ]
+    },
+    {
+      "id": "simon_logoff_summary",
+      "name": "Simon Logoff Summary",
+      "description": "End-of-day wrap-up with day rating and tomorrow priorities",
+      "enabled": true,
+      "schedule": {
+        "times": ["17:30"],
+        "days": "mon-fri"
+      },
+      "steps": [
+        {
+          "id": "scan_tasks",
+          "tool": "execution/tools/slack_task_scanner.py",
+          "cli_pattern": "action_json",
+          "action": "extract_tasks",
+          "params": {"hours": 10},
+          "description": "LLM scan for all tasks from today"
+        },
+        {
+          "id": "read_pm_channel",
+          "tool": "execution/slack_read_channel.py",
+          "cli_pattern": "argparse",
+          "params": {"channel": "#project-manager", "--since": "10", "--limit": "80"},
+          "description": "Read full day of #project-manager messages"
+        },
+        {
+          "id": "attention_needed",
+          "tool": "execution/tools/pm_analytics.py",
+          "cli_pattern": "action_json",
+          "action": "get_attention_needed",
+          "params": {"hours": 10},
+          "description": "Find any remaining items needing attention"
+        },
+        {
+          "id": "unfollowed_messages",
+          "tool": "execution/tools/pm_analytics.py",
+          "cli_pattern": "action_json",
+          "action": "get_unfollowed_messages",
+          "params": {"hours": 10},
+          "description": "Find unanswered messages from today"
+        },
+        {
+          "id": "day_rating",
+          "tool": "execution/tools/day_rating.py",
+          "cli_pattern": "action_json",
+          "action": "rate_day",
+          "params": {},
+          "description": "Generate PM day rating (A-F scale)"
+        },
+        {
+          "id": "generate_summary",
+          "tool": "execution/tools/summary_generator.py",
+          "cli_pattern": "action_json",
+          "action": "generate",
+          "params": {
+            "input_steps": ["scan_tasks", "read_pm_channel", "attention_needed", "unfollowed_messages", "day_rating"],
+            "recipient_name": "Simon",
+            "time_of_day": "logoff"
+          },
+          "description": "Generate end-of-day wrap-up via Claude"
+        },
+        {
+          "id": "send_dm",
+          "tool": "execution/tools/slack_write.py",
+          "cli_pattern": "positional",
+          "action": "send_dm",
+          "params": {
+            "args": ["${SIMON_SLACK_USER_ID}", "${steps.generate_summary.summary}"]
+          },
+          "description": "Send logoff summary DM to Simon"
+        }
+      ]
+    },
+    {
+      "id": "client_followup_reminder",
+      "name": "Client Follow-up Reminder",
+      "description": "Detects clients who haven't responded to video reviews in 24-48h",
+      "enabled": true,
+      "skip_if_empty": true,
+      "schedule": {
+        "times": ["10:00", "14:00"],
+        "days": "mon-fri"
+      },
+      "steps": [
+        {
+          "id": "check_followups",
+          "tool": "execution/tools/followup_monitor.py",
+          "cli_pattern": "action_json",
+          "action": "check_client_followups",
+          "params": {"hours": 48},
+          "description": "Find clients not responding to reviews"
+        },
+        {
+          "id": "send_dm",
+          "tool": "execution/tools/slack_write.py",
+          "cli_pattern": "positional",
+          "action": "send_dm",
+          "params": {
+            "args": ["${SIMON_SLACK_USER_ID}", "${steps.check_followups.summary}"]
+          },
+          "description": "DM Simon about client follow-ups"
+        }
+      ]
+    },
+    {
+      "id": "deadline_editor_alert",
+      "name": "Deadline Editor Alert",
+      "description": "Reminds editors about videos with deadline tomorrow",
+      "enabled": true,
+      "skip_if_empty": true,
+      "schedule": {
+        "times": ["09:00"],
+        "days": "mon-fri"
+      },
+      "steps": [
+        {
+          "id": "check_deadlines",
+          "tool": "execution/tools/status_change_monitor.py",
+          "cli_pattern": "action_json",
+          "action": "check_upcoming_deadlines",
+          "params": {"days_ahead": 1},
+          "description": "Find videos with deadline tomorrow"
+        },
+        {
+          "id": "send_dm",
+          "tool": "execution/tools/slack_write.py",
+          "cli_pattern": "positional",
+          "action": "send_dm",
+          "params": {
+            "args": ["${SIMON_SLACK_USER_ID}", "${steps.check_deadlines.summary}"]
+          },
+          "description": "Alert Simon about upcoming deadlines"
+        }
+      ]
+    },
+    {
+      "id": "unanswered_client_alert",
+      "name": "Unanswered Client Alert",
+      "description": "Detects client messages with no reply after 30 minutes",
+      "enabled": true,
+      "skip_if_empty": true,
+      "schedule": {
+        "interval_minutes": 15,
+        "start_hour": 9,
+        "end_hour": 15,
+        "days": "mon-fri"
+      },
+      "steps": [
+        {
+          "id": "check_unanswered",
+          "tool": "execution/tools/response_monitor.py",
+          "cli_pattern": "action_json",
+          "action": "check_unanswered_outbound",
+          "params": {"minutes_threshold": 30},
+          "description": "Find outbound messages with no client reply"
+        },
+        {
+          "id": "send_dm",
+          "tool": "execution/tools/slack_write.py",
+          "cli_pattern": "positional",
+          "action": "send_dm",
+          "params": {
+            "args": ["${SIMON_SLACK_USER_ID}", "${steps.check_unanswered.summary}"]
+          },
+          "description": "Alert Simon about unanswered clients"
+        }
+      ]
+    },
+    {
+      "id": "unanswered_editor_alert",
+      "name": "Unanswered Editor Alert",
+      "description": "Detects editor questions/problems not tended to within 30 minutes",
+      "enabled": true,
+      "skip_if_empty": true,
+      "schedule": {
+        "interval_minutes": 15,
+        "start_hour": 9,
+        "end_hour": 15,
+        "days": "mon-fri"
+      },
+      "steps": [
+        {
+          "id": "check_editor_questions",
+          "tool": "execution/tools/followup_monitor.py",
+          "cli_pattern": "action_json",
+          "action": "check_editor_questions",
+          "params": {"minutes_threshold": 30},
+          "description": "Find editor questions not responded to"
+        },
+        {
+          "id": "send_dm",
+          "tool": "execution/tools/slack_write.py",
+          "cli_pattern": "positional",
+          "action": "send_dm",
+          "params": {
+            "args": ["${SIMON_SLACK_USER_ID}", "${steps.check_editor_questions.summary}"]
+          },
+          "description": "Alert Simon about unanswered editor questions"
+        }
+      ]
+    },
+    {
+      "id": "payment_reminder",
+      "name": "Payment Reminder",
+      "description": "Sends payment requests to editors on 15th and 30th",
+      "enabled": true,
+      "skip_if_empty": true,
+      "schedule": {
+        "times": ["09:00"],
+        "days": "*"
+      },
+      "steps": [
+        {
+          "id": "check_payment",
+          "tool": "execution/tools/payment_reminder.py",
+          "cli_pattern": "action_json",
+          "action": "check_and_remind",
+          "params": {},
+          "description": "Check if today is payment day and get editor list"
+        },
+        {
+          "id": "send_dm",
+          "tool": "execution/tools/slack_write.py",
+          "cli_pattern": "positional",
+          "action": "send_dm",
+          "params": {
+            "args": ["${SIMON_SLACK_USER_ID}", "${steps.check_payment.summary}"]
+          },
+          "description": "Notify Simon about payment reminders"
+        }
+      ]
     }
   ]
 }

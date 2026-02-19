@@ -481,7 +481,9 @@ def format_markdown_report(all_editors, hours):
             lines.append("| Video | Airtable Status |")
             lines.append("|-------|--------|")
             for v in videos:
-                lines.append("| {} | {} |".format(v["display_name"], v["status"]))
+                lines.append("| {} | {} |".format(
+                    v["display_name"], v["status"]
+                ))
             lines.append("")
 
             if len(videos) >= 6:
@@ -536,6 +538,143 @@ def format_markdown_report(all_editors, hours):
     return "\n".join(lines)
 
 
+def _get_latest_context_line(task):
+    """Get the most recent meaningful Slack context line for a task (truncated)."""
+    for ctx in task.get("context", []):
+        # Skip Airtable bot lines — prefer human context
+        if "[Airtable]" not in ctx:
+            # Strip the timestamp prefix for compact display
+            text = ctx
+            if "] " in text:
+                text = text.split("] ", 1)[-1]
+            return text[:100] + "..." if len(text) > 100 else text
+    # Fall back to most recent Airtable event
+    for ctx in task.get("context", []):
+        text = ctx
+        if "] " in text:
+            text = text.split("] ", 1)[-1]
+        return text[:100] + "..." if len(text) > 100 else text
+    return ""
+
+
+def format_action_report(all_editors, hours):
+    """Format report grouped by action needed (PM-optimized view)."""
+    lines = []
+    lines.append("## PM Action Report ({}h scan)".format(hours))
+    lines.append("Generated: {}".format(datetime.now().strftime("%Y-%m-%d %H:%M")))
+    lines.append("")
+
+    # Collect ALL tasks across all editors with editor info attached
+    all_tasks = []
+    silent_editors = []
+
+    for ed in all_editors:
+        editor_name = ed["editor_display"]
+        for task in ed["tasks"]:
+            task_copy = dict(task)
+            task_copy["editor"] = editor_name
+            all_tasks.append(task_copy)
+
+        # Detect silent editors
+        if not ed["has_activity"] and ed["airtable_videos"]:
+            silent_editors.append({
+                "editor": editor_name,
+                "active_videos": len(ed["airtable_videos"]),
+            })
+
+    # Bucket tasks by status
+    qc_tasks = [t for t in all_tasks if t["airtable_status"] == "60 - Submitted for QC"]
+    schedule_tasks = [t for t in all_tasks if t["airtable_status"] == "80 - Approved By Client"]
+    revision_tasks = [t for t in all_tasks if t["airtable_status"] == "59 - Editing Revisions"]
+    client_tasks = [t for t in all_tasks if t["airtable_status"] == "75 - Sent to Client For Review"]
+    in_progress = [t for t in all_tasks if t["airtable_status"] in (
+        "41 - Sent to Editor", "50 - Editor Confirmed", "40 - Client Sent Raw Footage")]
+
+    # Sort all buckets alphabetically by video name
+    for bucket in (qc_tasks, schedule_tasks, revision_tasks, client_tasks, in_progress):
+        bucket.sort(key=lambda t: t["display_name"])
+
+    # --- DO FIRST ---
+    if qc_tasks:
+        lines.append("### DO FIRST — QC Required ({})".format(len(qc_tasks)))
+        lines.append("| # | Video | Editor | Context |")
+        lines.append("|---|-------|--------|---------|")
+        for i, t in enumerate(qc_tasks, 1):
+            ctx = _get_latest_context_line(t)
+            lines.append("| {} | {} | {} | {} |".format(
+                i, t["display_name"], t["editor"], ctx
+            ))
+        lines.append("")
+
+    # --- SCHEDULE NOW ---
+    if schedule_tasks:
+        lines.append("### SCHEDULE NOW — Approved by Client ({})".format(len(schedule_tasks)))
+        lines.append("| # | Video | Editor |")
+        lines.append("|---|-------|--------|")
+        for i, t in enumerate(schedule_tasks, 1):
+            lines.append("| {} | {} | {} |".format(
+                i, t["display_name"], t["editor"]
+            ))
+        lines.append("")
+
+    # --- FOLLOW UP ---
+    if revision_tasks:
+        lines.append("### FOLLOW UP — Editor Revisions ({})".format(len(revision_tasks)))
+        lines.append("Videos in revision (status 59) where the editor needs to act.")
+        lines.append("| # | Video | Editor | Last Activity |")
+        lines.append("|---|-------|--------|---------------|")
+        for i, t in enumerate(revision_tasks, 1):
+            ctx = _get_latest_context_line(t)
+            lines.append("| {} | {} | {} | {} |".format(
+                i, t["display_name"], t["editor"], ctx
+            ))
+        lines.append("")
+
+    # --- MONITOR ---
+    if client_tasks:
+        lines.append("### MONITOR — Client Blockers ({})".format(len(client_tasks)))
+        lines.append("Waiting on client response. No urgent PM action.")
+        lines.append("| # | Video | Client | Editor |")
+        lines.append("|---|-------|--------|--------|")
+        for i, t in enumerate(client_tasks, 1):
+            lines.append("| {} | {} | {} | {} |".format(
+                i, t["display_name"], t["client"], t["editor"]
+            ))
+        lines.append("")
+
+    # --- IN PROGRESS ---
+    if in_progress:
+        lines.append("### IN PROGRESS — With Editors ({})".format(len(in_progress)))
+        lines.append("Videos assigned to editors, not yet submitted for QC.")
+        lines.append("| # | Video | Editor | Status |")
+        lines.append("|---|-------|--------|--------|")
+        for i, t in enumerate(in_progress, 1):
+            # Shorten status for compact display
+            short_status = t["airtable_status"].split(" - ", 1)[-1] if " - " in t["airtable_status"] else t["airtable_status"]
+            lines.append("| {} | {} | {} | {} |".format(
+                i, t["display_name"], t["editor"], short_status
+            ))
+        lines.append("")
+
+    # --- SILENT EDITORS ---
+    if silent_editors:
+        silent_editors.sort(key=lambda e: -e["active_videos"])
+        lines.append("### SILENT EDITORS — No Activity {}h".format(hours))
+        lines.append("| Editor | Active Videos |")
+        lines.append("|--------|--------------|")
+        for e in silent_editors:
+            lines.append("| {} | {} |".format(e["editor"], e["active_videos"]))
+        lines.append("")
+
+    # Totals
+    total = len(all_tasks)
+    lines.append("---")
+    lines.append(f"**{total} videos tracked across {len(all_editors)} editors.**")
+    lines.append("")
+
+    return "\n".join(lines)
+
+
 def _task_description(task):
     """Generate a short task description from status and context."""
     status = task["airtable_status"]
@@ -585,6 +724,9 @@ Examples:
                         help="Output format (default: markdown)")
     parser.add_argument("--editors-only", action="store_true", default=False,
                         help="Only show editors with active Airtable videos")
+    parser.add_argument("--format", choices=["editor", "action"], default="action",
+                        dest="report_format",
+                        help="Report format: 'action' (prioritized PM view) or 'editor' (per-editor deep dive)")
 
     args = parser.parse_args()
 
@@ -632,9 +774,13 @@ Examples:
             output = {
                 "generated": datetime.now().isoformat(),
                 "hours_scanned": args.hours,
+                "report_format": args.report_format,
                 "editors": all_editors,
             }
             print(json.dumps(output, indent=2, default=str))
+        elif args.report_format == "action":
+            report = format_action_report(all_editors, args.hours)
+            print(report)
         else:
             report = format_markdown_report(all_editors, args.hours)
             print(report)

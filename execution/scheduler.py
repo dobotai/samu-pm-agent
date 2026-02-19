@@ -133,11 +133,37 @@ class AutomationScheduler:
             return "*"
         return days_str  # "mon-fri", "mon,wed,fri" are already valid
 
+    def _expand_interval_to_times(self, schedule: dict) -> list:
+        """Convert interval_minutes config to explicit time list.
+
+        Example: {"interval_minutes": 15, "start_hour": 9, "end_hour": 15}
+        Returns: ["09:00", "09:15", "09:30", ..., "14:45"]
+        """
+        interval = schedule.get("interval_minutes", 30)
+        start_hour = schedule.get("start_hour", 9)
+        end_hour = schedule.get("end_hour", 17)
+
+        times = []
+        current_min = start_hour * 60
+        end_min = end_hour * 60
+
+        while current_min < end_min:
+            h, m = divmod(current_min, 60)
+            times.append(f"{h:02d}:{m:02d}")
+            current_min += interval
+
+        return times
+
     def _register_jobs(self, auto: dict):
         schedule = auto.get("schedule", {})
         days = self._parse_days(schedule.get("days", "mon-fri"))
 
-        for time_str in schedule.get("times", []):
+        # Support interval_minutes config by expanding to time list
+        times = schedule.get("times", [])
+        if "interval_minutes" in schedule:
+            times = self._expand_interval_to_times(schedule)
+
+        for time_str in times:
             hour, minute = map(int, time_str.split(":"))
             trigger = CronTrigger(
                 hour=hour,
@@ -222,6 +248,13 @@ class AutomationScheduler:
                         "duration": round(time.time() - step_start, 2),
                     })
                     print(f"[Scheduler]   Step {step['id']}: OK ({step_results[-1]['duration']}s)")
+
+                    # Skip remaining steps if data step returned nothing to report
+                    if auto.get("skip_if_empty", False):
+                        output = result.get("output", result)
+                        if isinstance(output, dict) and output.get("count", -1) == 0:
+                            print(f"[Scheduler]   Nothing to report — skipping remaining steps")
+                            break
                 except Exception as e:
                     step_results.append({
                         "id": step["id"],
@@ -280,9 +313,10 @@ class AutomationScheduler:
                 params["input_data"] = input_data
                 del params["input_steps"]
 
-            # Add time_of_day context if step uses it
+            # Add time_of_day context if step uses it (but don't override explicit config)
             if step["tool"].endswith("summary_generator.py"):
-                params["time_of_day"] = context.get("time_of_day", "update")
+                if "time_of_day" not in step.get("params", {}):
+                    params["time_of_day"] = context.get("time_of_day", "update")
 
             # Resolve variables in all string params
             resolved = {}

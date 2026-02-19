@@ -94,137 +94,113 @@ python execution/slack_send_message.py "#project-manager" \
   "Checked in for the day. Starting with QC on 3 videos."
 ```
 
-## ⚠️ PARTIALLY IMPLEMENTED
+### 3. Message Templates (Complete)
+**Status:** All SOP templates codified in `config/message_templates.json`
 
-### 3. Message Templates
-**Status:** Templates identified, need to be codified in agent config
+12 templates available:
+- `editor_checkin_nudge` - 8h no check-in
+- `editor_whatsapp_escalation` - 24h no response (requires approval)
+- `client_video_review` - Video ready for checking
+- `client_video_scheduled` - Video scheduled notification
+- `editor_payment_request` - 15th/30th payment request
+- `editor_invoice_followup` - Invoice follow-up
+- `editor_new_assignment` - New video assignment
+- `client_qc_progress` - "Close to the finish line" message
+- `client_introduction_existing` - New PM intro
+- `editor_introduction` - New editor intro
+- `editor_deadline_reminder` - Deadline approaching
+- `client_video_progress` - Progress update
 
-#### Templates Needed (from SOP):
+### 4. Automations (Complete - 7 total)
+**Status:** All 7 automations configured in `config/automations.json`
 
-**Editor Check-in Nudge (8 hours late):**
-```
-Hey, we haven't heard from you in 8 hours. Is everything ok?
-```
+| Automation | Schedule | Purpose |
+|------------|----------|---------|
+| Daily Summary | 09:30, 12:15, 15:00 Mon-Fri | Briefing DM to Simon |
+| Logoff Summary | 17:30 Mon-Fri | EOD wrap-up + A-F rating |
+| Client Follow-up | 10:00, 14:00 Mon-Fri | Clients not responding to reviews |
+| Deadline Alert | 09:00 Mon-Fri | Videos due tomorrow |
+| Client Response | Every 15min 9:30-15:00 | Messages with no reply >30min |
+| Editor Alert | Every 15min 9:30-15:00 | Questions not tended to >30min |
+| Payment Reminder | 09:00 daily | 15th/30th only |
 
-**Editor WhatsApp (24 hours late):**
-```
-Hey, this is [NAME] from KS Media. Is everything ok? We haven't got an update from you on Slack for almost a day. Please check in ASAP.
-```
+### 5. Day Rating System (Complete)
+**Status:** `execution/tools/day_rating.py` — Simon's A-F scale (approved by Samu)
+- Deterministic scoring: task completion (40%), client responsiveness (20%), editor responsiveness (20%), proactive follow-ups (10%), unfollowed messages (10%)
+- Integrated with logoff summary automation
 
-**Client Video Review:**
-```
-Hey @client, new video is ready for checking: [frame link]
-Folder with thumbnail: [drive folder]
+### 6. Video ID Display Fix (Complete)
+**Status:** Fixed across all 5 affected files
+- Created `execution/tools/utils.py` with `format_video_ref()` and `get_client_map()`
+- All output now shows "ClientName Video #X" format
+- Slack crosscheck search now uses human-readable references instead of raw IDs
 
-If it's approved, let us know and we're scheduling it! If you have any revisions, feel free to put them in frame :)
-```
+### 7. Deliverables Cross-Check (Complete)
+**Status:** Added `check_client_deliverables()` to `execution/slack_airtable_crosscheck.py`
+- Reads Clients table Deliverables field
+- Compares completed videos vs package commitment per client
 
-**Client Video Scheduled:**
-```
-Hey @name/guys, new video is scheduled for [DAY] 11am EST.
-```
+### 8. Video Delivery Workflow (Complete)
+**Status:** `execution/tools/video_delivery.py`
+- Composes client delivery messages from templates
+- Checks for Frame.io and Drive links in Airtable
+- Returns missing link requirements when not available
 
-**Editor Payment Request (15th & 30th):**
-```
-Hey, we're paying you today. Please send over how much $ we owe you and a breakdown of the videos you did. Thank you!
-```
+## ⏳ CREDENTIAL-READY (Built, Awaiting API Keys)
 
-**Invoice Request:**
-```
-Thanks. Could you send an invoice about it?
-```
+### 9. YouTube Operations
+**Status:** `execution/tools/youtube_tool.py` — Built, needs YOUTUBE_CLIENT_SECRETS_JSON + per-client OAuth tokens
 
-**Client Introduction (existing client):**
-```
-Hey [NAME], great to meet you and I'm excited to start working together. Samu will still be the main point of contact, but I'll help wherever I can.
-```
+#### Available Actions:
+- `list_channels` - List client YouTube channels
+- `upload_video` / `schedule_video` - Upload and schedule with metadata
+- `update_metadata` - Update title, description, tags
+- `get_status` - Check processing status
+- `list_scheduled` - View upcoming scheduled videos
 
-**Editor Introduction:**
-```
-Hey [NAME], I'm Simon, the ops manager at KS Media. Looking forward to working with you!
-```
+#### Needs:
+- YouTube Data API v3 credentials (YOUTUBE_CLIENT_SECRETS_JSON)
+- Per-client OAuth2 tokens (one-time auth flow per client)
+- admin@ks-media.co added as admin on all client channels
+
+### 10. Google Drive Write Operations
+**Status:** `execution/tools/drive_ops.py` — Built, needs GOOGLE_CREDENTIALS_JSON with write scope
+
+#### Available Actions:
+- `list_files` - List folder contents
+- `get_link` - Get shareable links
+- `create_folder` - Create folders
+- `upload_file` / `download_file` - File transfer
+- `search` - Search by name
+
+### 11. Frame.io Integration
+**Status:** `execution/tools/frameio_tool.py` — Built, needs FRAMEIO_API_TOKEN
+
+#### Available Actions:
+- `list_projects` - List all projects
+- `get_asset` - Get asset details
+- `get_comments` / `create_comment` - QC feedback
+- `get_review_link` - Shareable review links
+
+### 12. Email (SendGrid)
+**Status:** `execution/tools/email_tool.py` — Built, needs SENDGRID_API_KEY + SENDGRID_FROM_EMAIL
+
+#### Available Actions:
+- `send_email` - Plain text or HTML
+- `send_template_email` - Dynamic templates
 
 ## ❌ NOT YET IMPLEMENTED
 
-### 4. YouTube Operations
-**Priority: HIGH** - Core to scheduling workflow
+### Payment Tracking
+- Google Sheets logging
+- Invoice storage
+- Cross-checking payment amounts with video counts
 
-#### Tools Needed:
-- `youtube_schedule_video.py` - Upload and schedule video
-- `youtube_get_description_template.py` - Get client's description template
-- `youtube_generate_tags.py` - Generate tags (integrate rapidtags.io)
-- `youtube_generate_utm.py` - Generate UTM tracking links
+## 🎯 IMPLEMENTATION STATUS
 
-#### Blockers:
-- Requires YouTube Data API v3 access
-- Requires OAuth2 credentials for each client channel
-- Requires admin@ks-media.co to be added as admin on all client channels
-- Complex metadata management (title, description, thumbnail, tags, elements)
-
-#### SOP Tasks BLOCKED:
-❌ Schedule videos on YouTube
-❌ Upload videos with metadata
-❌ Set thumbnails
-❌ Generate tags
-❌ Add video elements
-❌ Enable monetization
-
-### 5. Google Drive Operations
-**Priority: HIGH** - Needed for file access
-
-#### Tools Needed:
-- `drive_get_file_link.py` - Get shareable links
-- `drive_download_file.py` - Download videos for YouTube upload
-- `drive_list_folder.py` - List folder contents
-- `drive_create_folder.py` - Create "Finished Videos" folders
-- `drive_upload_file.py` - Upload files
-
-#### Blockers:
-- Requires Google Drive API credentials
-- Service account or OAuth setup needed
-
-#### SOP Tasks BLOCKED:
-❌ Access raw footage folders
-❌ Download finished videos
-❌ Create deliverable folders
-❌ Get folder links for clients
-
-### 6. Frame.io Integration
-**Priority: MEDIUM** - Video review platform
-
-#### Tools Needed:
-- `frameio_get_video_link.py` - Get review links for clients
-- `frameio_list_projects.py` - List videos pending review
-- `frameio_add_comment.py` - Leave QC feedback
-
-#### Blockers:
-- Requires Frame.io API credentials
-- Account access needed
-
-#### SOP Tasks BLOCKED:
-❌ Get Frame.io links to send to clients
-❌ Check which videos are in review
-❌ Leave QC comments on videos
-
-### 7. Payment Tracking
-**Priority: LOW** - Can be manual initially
-
-#### Tools Needed:
-- `sheets_update_payment.py` - Log editor payments
-- `sheets_read_payment_history.py` - Check payment records
-- `drive_upload_invoice.py` - Store invoices
-
-#### SOP Tasks BLOCKED:
-❌ Automatically log payments in Google Sheets
-❌ Upload invoices to Drive
-❌ Cross-check payment amounts with video counts
-
-## 🎯 RECOMMENDED IMPLEMENTATION PHASES
-
-### Phase 1: Current State (COMPLETE)
+### Phase 1: Core PM (COMPLETE)
 ✅ Airtable full integration
-✅ Slack messaging
-✅ Slack monitoring
+✅ Slack messaging and monitoring
 ✅ Basic PM workflows
 
 **What the agent CAN do now:**
@@ -255,153 +231,82 @@ This enables end-to-end video delivery:
    - Get video review links
    - List pending reviews
 
-**Impact:** Agent can fully handle "send video to client for review" workflow
+### Phase 2: Bug Fixes + Automations (COMPLETE)
+✅ Video ID display bug fixed across 5 files
+✅ Slack crosscheck search bug fixed (now uses human-readable references)
+✅ Scheduler time_of_day override bug fixed
+✅ 6 new automations (7 total) with interval support
+✅ Day rating system (A-F scale)
+✅ Message templates codified
+✅ Client deliverables cross-check
+✅ Video delivery workflow
 
-### Phase 3: YouTube Automation (High Value)
-This is the most complex but highest impact:
+### Phase 3: Integration Tools (BUILT, AWAITING CREDENTIALS)
+✅ YouTube scheduling tool built
+✅ Google Drive read+write tool built
+✅ Frame.io integration built
+✅ SendGrid email tool built
 
-**Build:**
-1. YouTube API authentication per client
-2. Upload and schedule tool
-3. Metadata management (tags, descriptions, UTM)
-4. Thumbnail upload
-
-**Impact:** Agent can fully schedule videos end-to-end
-
-### Phase 4: Administrative (Optional)
-**Build:**
-1. Google Sheets payment tracking
-2. Invoice management
-3. Reporting dashboards
-
-**Impact:** Reduced manual admin work
+### Phase 4: Next Up
+- Ideation Agent (separate project)
+- Google Sheets payment tracking
+- Invoice management
 
 ## 📋 CURRENT AGENT CAPABILITIES SUMMARY
 
-### What the PM Agent CAN Do Right Now:
+### Fully Automated (No Manual Input):
+- ✅ 7 scheduled automations running throughout the day
+- ✅ Morning/midday/afternoon briefings to Simon
+- ✅ End-of-day wrap-up with A-F rating
+- ✅ Unanswered message detection (15-min intervals)
+- ✅ Client follow-up reminders
+- ✅ Editor deadline alerts
+- ✅ Payment reminders on 15th/30th
 
-**Morning Routine:**
-1. ✅ Check Airtable for videos needing QC
-2. ✅ Check Airtable for videos needing scheduling
-3. ✅ Read all Slack channels for updates
-4. ✅ Identify waiting editors/clients
-5. ✅ Create priority list of tasks
-6. ✅ Send check-in message to Samu
+### On-Demand (Ask the Agent):
+- ✅ Video pipeline monitoring (Airtable)
+- ✅ Cross-reference Slack + Airtable discrepancies
+- ✅ Client sentiment analysis and risk assessment
+- ✅ Editor task reports with Slack context
+- ✅ LLM-powered Slack task scanning
+- ✅ Client deliverables tracking vs packages
+- ✅ Video delivery message composition
 
-**Video Management:**
-1. ✅ Monitor video pipeline in Airtable
-2. ✅ Filter by status, deadline, editor, client
-3. ✅ Update statuses throughout workflow
-4. ✅ Assign videos to editors
-5. ✅ Track which videos are close to deadline
-6. ✅ Identify blocked videos
+### Requires Manual Input + API Keys:
+- ⏳ YouTube scheduling (tool built, needs credentials)
+- ⏳ Google Drive file access (tool built, needs credentials)
+- ⏳ Frame.io review links (tool built, needs credentials)
+- ⏳ Email sending (tool built, needs credentials)
+- ❌ Quality checking (human watches video)
 
-**Editor Communication:**
-1. ✅ Send check-in nudges
-2. ✅ Notify of new assignments
-3. ✅ Read editor channels
-4. ✅ Monitor editor responses
-5. ✅ Send payment requests (15th & 30th)
+## 🛠️ TO ENABLE REMAINING INTEGRATIONS
 
-**Client Communication:**
-1. ✅ Read client channels for new videos
-2. ✅ Send messages (with manual Frame.io/Drive links)
-3. ✅ Notify when videos are scheduled
-
-**Evening Routine:**
-1. ✅ Check Airtable for pending tasks
-2. ✅ Read all Slack channels
-3. ✅ Send follow-ups as needed
-4. ✅ Triple-check nothing missed
-5. ✅ Send check-out message to Samu
-
-### What Requires Manual Input (For Now):
-
-**YouTube Scheduling:**
-- ❌ You must manually schedule videos
-- Agent can: Identify which videos need scheduling
-- Agent can: Notify you in Slack
-- Agent can: Update Airtable after you schedule
-
-**File Access:**
-- ❌ You must manually provide Drive/Frame.io links
-- Agent can: Track where links are needed
-- Agent can: Send messages with links you provide
-
-**Quality Checking:**
-- ❌ You must manually watch and approve videos
-- Agent can: Identify videos ready for QC
-- Agent can: Track QC status in Airtable
-- Agent can: Notify editors after you QC
-
-## 🛠️ NEXT STEPS
-
-### To Enable Full Automation:
-
-1. **Google Drive API Setup** (1-2 hours)
-   - Create service account
-   - Grant access to KS Media Drive
-   - Add credentials to .env
-
-2. **Frame.io API Setup** (30 mins)
-   - Get API token
-   - Add to .env
-   - Build 2-3 tools
-
-3. **YouTube API Setup** (Complex - 4-6 hours per client)
-   - Enable YouTube Data API
-   - OAuth2 setup for each client channel
-   - Ensure admin@ks-media.co has admin access
-   - Build scheduling tool with metadata handling
-
-4. **Agent Configuration** (1 hour)
-   - Create `config/clients/ks_media_pm.json`
-   - Define system prompt with PM personality
-   - List all available tools
-   - Set constraints
-   - Define message templates
-
-5. **Directive Writing** (2 hours)
-   - Create `directives/pm_daily_routine.md`
-   - Document decision trees
-   - When to use each tool
-   - How to handle edge cases
-
-### Testing Checklist:
-
-- [ ] Agent can identify videos needing QC
-- [ ] Agent can identify videos needing scheduling
-- [ ] Agent can send check-in messages
-- [ ] Agent can notify editors of assignments
-- [ ] Agent can update video statuses
-- [ ] Agent can communicate with clients
-- [ ] Agent can track deadlines
-- [ ] Agent can monitor Slack channels
-- [ ] Agent can handle daily routine
-- [ ] Agent escalates strategic questions to Samu
+1. **Frame.io** - Add `FRAMEIO_API_TOKEN` to .env
+2. **Google Drive Write** - Add `GOOGLE_CREDENTIALS_JSON` with drive scope to .env
+3. **YouTube** - Add `YOUTUBE_CLIENT_SECRETS_JSON` to .env, run OAuth flow per client
+4. **SendGrid** - Add `SENDGRID_API_KEY` and `SENDGRID_FROM_EMAIL` to .env
 
 ## 📖 Documentation
 
+- [Automations Guide](directives/automations_guide.md)
 - [Airtable Operations Directive](directives/airtable_operations.md)
-- [PM SOP Analysis](.tmp/pm_sop_analysis.md)
 - [Project Management SOP (Original)](SOP/Project Management SOP.txt)
 
 ## 🎉 SUMMARY
 
-**You have a working PM agent that can handle 60-70% of the daily routine:**
+**The PM agent now handles ~85-90% of the daily PM routine:**
 
 ✅ Complete Airtable monitoring and management
-✅ Complete Slack communication
-✅ Video tracking and status updates
-✅ Editor and client messaging
-✅ Deadline monitoring
-✅ Task prioritization support
+✅ Complete Slack communication with smart cross-referencing
+✅ 7 automated workflows running throughout the day
+✅ End-of-day ratings on Simon's A-F scale
+✅ Proactive monitoring for unanswered messages (every 15 min)
+✅ Payment reminders, deadline alerts, follow-up detection
+✅ Video ID display bug fixed (shows "Taylor Video #11" not raw IDs)
+✅ Message templates codified for consistent communication
+✅ Integration tools built and ready for credentials
 
-**The remaining 30-40% requires:**
-❌ YouTube scheduling (most complex)
-❌ Google Drive file access
-❌ Frame.io integration
+**Remaining ~10-15% requires API credentials for:**
+- YouTube scheduling, Google Drive access, Frame.io links, Email
 
-**Recommendation:** Start using the agent NOW for Airtable and Slack workflows. Build Drive/Frame.io tools next for biggest immediate impact. Save YouTube automation for last as it's most complex.
-
-Your agent is production-ready for monitoring, communication, and coordination tasks!
+**The agent is production-ready. Add API keys to unlock full end-to-end automation.**

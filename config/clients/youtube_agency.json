@@ -578,6 +578,174 @@
         },
         "required": []
       }
+    },
+    {
+      "name": "followup_check_clients",
+      "script": "execution/tools/followup_monitor.py",
+      "description": "Detect unanswered client follow-ups. Finds videos sent for review with no client reply in 24-48h.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "check_client_followups"},
+          "hours": {"type": "number", "description": "Hours without reply to flag (default: 48)", "default": 48}
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "followup_check_editors",
+      "script": "execution/tools/followup_monitor.py",
+      "description": "Detect unanswered editor questions/problems not tended to within threshold.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "check_editor_questions"},
+          "minutes_threshold": {"type": "number", "description": "Minutes without reply to flag (default: 30)", "default": 30}
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "status_check_qc",
+      "script": "execution/tools/status_change_monitor.py",
+      "description": "Detect videos that moved to QC status since last check. Uses cache to track transitions.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "check_qc_submissions"}
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "status_check_deadlines",
+      "script": "execution/tools/status_change_monitor.py",
+      "description": "Find videos with deadline tomorrow or within N days that aren't completed.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "check_upcoming_deadlines"},
+          "days_ahead": {"type": "number", "description": "Days ahead to check (default: 1)", "default": 1}
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "response_monitor",
+      "script": "execution/tools/response_monitor.py",
+      "description": "Detect outbound client messages with no reply after 30 minutes. Only operates during work hours.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "check_unanswered_outbound"},
+          "minutes_threshold": {"type": "number", "description": "Minutes without reply to flag (default: 30)", "default": 30}
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "payment_reminder",
+      "script": "execution/tools/payment_reminder.py",
+      "description": "Check if today is payment day (15th/30th) and generate editor payment reminder list.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "check_and_remind"},
+          "force": {"type": "boolean", "description": "Force reminders regardless of date (for testing)", "default": false}
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "day_rating",
+      "script": "execution/tools/day_rating.py",
+      "description": "Generate end-of-day PM quality rating using Simon's A-F scale. Deterministic scoring based on task completion, message responsiveness, and proactive follow-ups.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "rate_day"}
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "video_delivery",
+      "script": "execution/tools/video_delivery.py",
+      "description": "Compose client delivery message for a video. Checks for Frame.io and Drive links and builds templated message.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "prepare_client_delivery"},
+          "record_id": {"type": "string", "description": "Airtable record ID of the video"},
+          "video_ref": {"type": "string", "description": "Video reference like 'Taylor Video #11'"}
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "frameio_list_projects",
+      "script": "execution/tools/frameio_tool.py",
+      "description": "List Frame.io projects. Requires FRAMEIO_API_TOKEN.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "list_projects"}
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "frameio_get_review_link",
+      "script": "execution/tools/frameio_tool.py",
+      "description": "Get shareable review link for a Frame.io asset.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "const": "get_review_link"},
+          "asset_id": {"type": "string", "description": "Frame.io asset ID"}
+        },
+        "required": ["action", "asset_id"]
+      }
+    },
+    {
+      "name": "drive_write_ops",
+      "script": "execution/tools/drive_ops.py",
+      "description": "Google Drive read+write operations: list_files, get_link, create_folder, upload_file, download_file, search.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "enum": ["list_files", "get_link", "create_folder", "upload_file", "download_file", "search"]}
+        },
+        "required": ["action"]
+      }
+    },
+    {
+      "name": "youtube_schedule",
+      "script": "execution/tools/youtube_tool.py",
+      "description": "YouTube scheduling: list_channels, upload_video, schedule_video, update_metadata, get_status, list_scheduled.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "enum": ["list_channels", "upload_video", "schedule_video", "update_metadata", "get_status", "list_scheduled"]},
+          "client": {"type": "string", "description": "Client name for YouTube channel token lookup"}
+        },
+        "required": ["action", "client"]
+      }
+    },
+    {
+      "name": "send_email",
+      "script": "execution/tools/email_tool.py",
+      "description": "Send emails via SendGrid. Requires SENDGRID_API_KEY.",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "action": {"type": "string", "enum": ["send_email", "send_template_email"]},
+          "to": {"type": "string", "description": "Recipient email"},
+          "subject": {"type": "string"},
+          "body": {"type": "string"}
+        },
+        "required": ["action", "to"]
+      }
     }
   ],
 

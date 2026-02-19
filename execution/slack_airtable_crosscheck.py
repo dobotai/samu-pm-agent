@@ -1,351 +1,448 @@
 #!/usr/bin/env python3
 """
 Slack-Airtable Cross-Check Tool
-Compares Slack activity with Airtable status to identify discrepancies
+Compares Slack editor channel activity with Airtable status to identify discrepancies.
 
-Use cases:
-1. Status verification - Editor says 'done' in Slack but Airtable not updated
-2. Deadline follow-ups - Urgent items with no recent Slack activity
-3. Communication gaps - Videos with no recent messages in editor channel
+Three checks:
+1. Status discrepancies — Editor says 'done' in Slack but Airtable not updated
+2. Communication gaps — Editor channels with active videos but zero messages
+3. Client deliverables — Monthly video delivery count vs package commitment
 
 Usage:
-    python slack_airtable_crosscheck.py [--check <type>] [--hours <num>]
-
-Examples:
-    python slack_airtable_crosscheck.py --check all
-    python slack_airtable_crosscheck.py --check status
-    python slack_airtable_crosscheck.py --check urgent --hours 48
+    python execution/slack_airtable_crosscheck.py
+    python execution/slack_airtable_crosscheck.py --check status
+    python execution/slack_airtable_crosscheck.py --check deliverables
+    python execution/slack_airtable_crosscheck.py --hours 72
 """
 
 import os
 import sys
 import json
-import argparse
 import re
-from datetime import datetime, timedelta
-from slack_sdk import WebClient
-from slack_sdk.errors import SlackApiError
-from pyairtable import Api
-from dotenv import load_dotenv
+import argparse
+from datetime import datetime, date
 
+from dotenv import load_dotenv
 load_dotenv()
 
+# Shared helpers (same pattern as editor_task_report / client_status_report)
+sys.path.insert(0, os.path.dirname(__file__))
+from airtable_read import read_airtable_records
+from slack_read_channel import read_slack_channel
 
-def get_airtable_data():
-    """Fetch videos and clients from Airtable"""
-    api_key = os.getenv('AIRTABLE_API_KEY')
-    base_id = os.getenv('AIRTABLE_BASE_ID', 'apph2RxHbsyqmCwxk')
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
+from utils import format_video_ref, get_client_map, resolve_editor_name, get_editor_map
 
-    if not api_key:
-        raise ValueError("AIRTABLE_API_KEY not found in environment variables")
 
-    api = Api(api_key)
+# ---------------------------------------------------------------------------
+# Data fetching
+# ---------------------------------------------------------------------------
 
-    # Get videos
-    videos_table = api.table(base_id, 'Videos')
-    videos = videos_table.all()
+def get_active_videos():
+    """Fetch active (non-completed) videos with fields needed for crosscheck."""
+    return read_airtable_records(
+        "Videos",
+        filter_formula="AND({Editing Status} != '', FIND('100 -', {Editing Status}) = 0)",
+        fields=[
+            "Video Number", "Client", "Editing Status", "Format",
+            "Assigned Editor", "Editor's Name",
+            "Editor's Slack Channel", "Slack ID Channel (from Assigned Editor)",
+        ],
+    )
 
-    # Get clients
-    clients_table = api.table(base_id, 'Clients')
-    clients = clients_table.all()
 
-    # Build client lookup
-    client_lookup = {}
-    for c in clients:
-        client_lookup[c['id']] = {
-            'name': c['fields'].get('Name', 'Unknown'),
-            'status': c['fields'].get('Status', ''),
-            'deliverables': c['fields'].get('Deliverables', ''),
+def get_all_videos():
+    """Fetch all videos (including completed) for deliverables tracking."""
+    return read_airtable_records(
+        "Videos",
+        fields=[
+            "Client", "Editing Status",
+            "Last Modified (Editing Status)",
+        ],
+    )
+
+
+def get_client_info():
+    """Fetch client records with status and deliverables."""
+    records = read_airtable_records("Clients", fields=["Name", "Status", "Deliverables"])
+    return {
+        r["id"]: {
+            "name": r["fields"].get("Name", "Unknown"),
+            "status": r["fields"].get("Status", ""),
+            "deliverables": r["fields"].get("Deliverables", ""),
         }
-
-    return videos, client_lookup
-
-
-def get_slack_client():
-    """Initialize Slack client"""
-    token = os.getenv('SLACK_USER_TOKEN') or os.getenv('SLACK_BOT_TOKEN')
-    if not token:
-        raise ValueError("SLACK_USER_TOKEN or SLACK_BOT_TOKEN not found")
-    return WebClient(token=token)
+        for r in records
+    }
 
 
-def get_channel_messages(client, channel_id, since_hours=48):
-    """Get recent messages from a channel"""
-    try:
-        oldest = (datetime.now() - timedelta(hours=since_hours)).timestamp()
-        response = client.conversations_history(
-            channel=channel_id,
-            oldest=str(oldest),
-            limit=100
-        )
-        return response.get('messages', [])
-    except SlackApiError as e:
-        # Channel might not be accessible
-        return []
+# ---------------------------------------------------------------------------
+# Check 1: Status discrepancies
+# ---------------------------------------------------------------------------
+
+COMPLETION_KEYWORDS = ["done", "finished", "completed", "uploaded", "sent", "delivered", "ready"]
 
 
-def check_status_discrepancies(videos, client_lookup, slack_client, hours=48):
-    """
-    Find videos where Slack mentions completion but Airtable status is behind
-    """
-    discrepancies = []
-    completion_keywords = ['done', 'finished', 'completed', 'uploaded', 'sent', 'delivered', 'ready']
+def check_status_discrepancies(active_videos, client_map, editor_map, hours=48):
+    """Find videos where Slack mentions completion but Airtable status is behind."""
+    # Group videos by editor channel to minimize Slack API calls
+    channel_videos = {}
+    for v in active_videos:
+        fields = v["fields"]
+        status = fields.get("Editing Status", "")
 
-    for video in videos:
-        fields = video['fields']
-        video_id = fields.get('Video ID', 'Unknown')
-        status = fields.get('Editing Status', '')
-        channel_ids = fields.get("Editor's Slack Channel", []) or fields.get("Slack ID Channel (from Assigned Editor)", [])
-        editor_name = (fields.get("Editor's Name", ['Unknown']) or ['Unknown'])[0]
-
-        # Skip completed videos
-        if '100 -' in status or 'DONE' in status:
+        # Skip statuses already past editing (sent to client, approved)
+        if any(s in status for s in ["75 -", "80 -"]):
             continue
 
-        # Skip if no channel
+        channel_ids = (
+            fields.get("Editor's Slack Channel", [])
+            or fields.get("Slack ID Channel (from Assigned Editor)", [])
+        )
         if not channel_ids:
             continue
 
-        channel_id = channel_ids[0]
-        messages = get_channel_messages(slack_client, channel_id, hours)
+        ch_id = channel_ids[0] if isinstance(channel_ids, list) else channel_ids
+        channel_videos.setdefault(ch_id, []).append(v)
 
-        # Look for completion keywords in recent messages
-        for msg in messages:
-            text = msg.get('text', '').lower()
-            video_mentioned = str(video_id) in text or f"#{video_id}" in text
+    discrepancies = []
 
-            for keyword in completion_keywords:
-                if keyword in text and video_mentioned:
-                    discrepancies.append({
-                        'video_id': video_id,
-                        'editor': editor_name,
-                        'airtable_status': status,
-                        'slack_message': msg.get('text', '')[:150],
-                        'message_time': datetime.fromtimestamp(float(msg.get('ts', 0))).strftime('%Y-%m-%d %H:%M'),
-                        'issue': f"Slack mentions '{keyword}' but Airtable status is '{status}'"
-                    })
-                    break
+    for ch_id, videos in channel_videos.items():
+        # Read channel messages once per channel
+        try:
+            messages = read_slack_channel(ch_id, since_hours=hours, include_threads=False)
+        except Exception:
+            continue
+
+        if not messages:
+            continue
+
+        for v in videos:
+            fields = v["fields"]
+            display_name = format_video_ref(fields, client_map)
+            editor = resolve_editor_name(fields, editor_map)
+            status = fields.get("Editing Status", "")
+            video_num = str(fields.get("Video Number", ""))
+
+            # Resolve client name for matching
+            client_ids = fields.get("Client", [])
+            client_name = ""
+            if client_ids and client_map:
+                cid = client_ids[0] if isinstance(client_ids, list) else client_ids
+                client_name = client_map.get(cid, "")
+
+            for msg in messages:
+                text = msg.get("text", "").lower()
+
+                # Require BOTH client name AND video number to avoid false positives
+                has_client = client_name and client_name.lower() in text
+                has_num = video_num and (
+                    f"#{video_num}" in text
+                    or f"video {video_num}" in text
+                    or f"video #{video_num}" in text
+                    or f"{client_name.lower()}{video_num}" in text
+                )
+                if not (has_client and has_num):
+                    continue
+
+                for keyword in COMPLETION_KEYWORDS:
+                    if keyword in text:
+                        msg_time = msg.get("datetime", "")
+                        discrepancies.append({
+                            "video": display_name,
+                            "editor": editor,
+                            "airtable_status": status,
+                            "slack_says": msg.get("text", "")[:120],
+                            "when": msg_time,
+                            "issue": f"Slack mentions '{keyword}' but Airtable is '{status}'",
+                        })
+                        break  # one match per message is enough
 
     return discrepancies
 
 
-def check_urgent_without_activity(videos, client_lookup, slack_client, hours=48):
-    """
-    Find urgent/overdue videos with no recent Slack activity
-    """
-    silent_urgent = []
-    today = datetime.now().date()
+# ---------------------------------------------------------------------------
+# Check 2: Communication gaps
+# ---------------------------------------------------------------------------
 
-    for video in videos:
-        fields = video['fields']
-        video_id = fields.get('Video ID', 'Unknown')
-        status = fields.get('Editing Status', '')
-        deadline_str = fields.get('Deadline', '')
-        channel_ids = fields.get("Editor's Slack Channel", []) or fields.get("Slack ID Channel (from Assigned Editor)", [])
-        editor_name = (fields.get("Editor's Name", ['Unknown']) or ['Unknown'])[0]
+def check_communication_gaps(active_videos, client_map, editor_map, hours=72):
+    """Find editor channels with active videos but zero messages."""
+    # Group active videos by editor channel
+    channel_videos = {}
+    for v in active_videos:
+        fields = v["fields"]
+        status = fields.get("Editing Status", "")
 
-        # Get client info
-        client_ids = fields.get('Client', [])
-        client_id = client_ids[0] if client_ids else None
-        client_info = client_lookup.get(client_id, {'name': 'Unknown', 'status': ''})
-
-        # Skip completed or sent to client
-        if '100 -' in status or '75 -' in status or 'DONE' in status:
+        # Only check videos currently with editors (not sent to client / approved)
+        if any(s in status for s in ["75 -", "80 -"]):
             continue
 
-        # Skip non-current clients
-        if client_info['status'] not in ['Current', 'Onboarding']:
-            continue
-
-        # Check if urgent (deadline within 3 days or overdue)
-        is_urgent = False
-        urgency_reason = ''
-
-        if deadline_str and deadline_str.strip():
-            try:
-                deadline = datetime.strptime(deadline_str, '%Y-%m-%d').date()
-                days_until = (deadline - today).days
-                if days_until < 0:
-                    is_urgent = True
-                    urgency_reason = f"OVERDUE by {abs(days_until)} days"
-                elif days_until <= 3:
-                    is_urgent = True
-                    urgency_reason = f"Due in {days_until} days"
-            except:
-                pass
-
-        if not is_urgent:
-            continue
-
-        # Check for recent Slack activity
+        channel_ids = (
+            fields.get("Editor's Slack Channel", [])
+            or fields.get("Slack ID Channel (from Assigned Editor)", [])
+        )
         if not channel_ids:
-            silent_urgent.append({
-                'video_id': video_id,
-                'editor': editor_name,
-                'client': client_info['name'],
-                'status': status,
-                'urgency': urgency_reason,
-                'issue': 'No Slack channel linked',
-                'last_activity': 'N/A'
-            })
             continue
 
-        channel_id = channel_ids[0]
-        messages = get_channel_messages(slack_client, channel_id, hours)
+        ch_id = channel_ids[0] if isinstance(channel_ids, list) else channel_ids
+        channel_videos.setdefault(ch_id, []).append(v)
 
-        # Filter for messages mentioning this video
-        video_messages = [m for m in messages if str(video_id) in m.get('text', '')]
-
-        if not video_messages:
-            # No recent activity about this video
-            silent_urgent.append({
-                'video_id': video_id,
-                'editor': editor_name,
-                'client': client_info['name'],
-                'status': status,
-                'urgency': urgency_reason,
-                'issue': f'No Slack activity about this video in last {hours} hours',
-                'last_activity': 'None found'
-            })
-
-    return silent_urgent
-
-
-def check_communication_gaps(videos, client_lookup, slack_client, hours=72):
-    """
-    Find active videos with no recent Slack messages in editor channel
-    """
     gaps = []
 
-    # Group videos by editor channel
-    channel_videos = {}
-    for video in videos:
-        fields = video['fields']
-        status = fields.get('Editing Status', '')
-
-        # Only check active videos (not completed, not sent to client)
-        if '100 -' in status or '75 -' in status or 'DONE' in status:
-            continue
-
-        channel_ids = fields.get("Editor's Slack Channel", []) or fields.get("Slack ID Channel (from Assigned Editor)", [])
-        if channel_ids:
-            channel_id = channel_ids[0]
-            if channel_id not in channel_videos:
-                channel_videos[channel_id] = []
-            channel_videos[channel_id].append(video)
-
-    # Check each channel
-    for channel_id, vids in channel_videos.items():
-        messages = get_channel_messages(slack_client, channel_id, hours)
+    for ch_id, videos in channel_videos.items():
+        try:
+            messages = read_slack_channel(ch_id, since_hours=hours, include_threads=False)
+        except Exception:
+            messages = []
 
         if not messages:
-            # No messages at all in this channel
-            editor_name = (vids[0]['fields'].get("Editor's Name", ['Unknown']) or ['Unknown'])[0]
-            video_ids = [v['fields'].get('Video ID', '?') for v in vids]
-
+            editor = resolve_editor_name(videos[0]["fields"], editor_map)
+            video_refs = [format_video_ref(v["fields"], client_map) for v in videos]
             gaps.append({
-                'editor': editor_name,
-                'channel_id': channel_id,
-                'active_videos': video_ids,
-                'hours_silent': hours,
-                'issue': f'No messages in channel for {hours}+ hours with {len(vids)} active video(s)'
+                "editor": editor,
+                "active_videos": video_refs,
+                "video_count": len(videos),
+                "silent_hours": hours,
             })
 
     return gaps
 
 
+# ---------------------------------------------------------------------------
+# Check 3: Client deliverables
+# ---------------------------------------------------------------------------
+
+def check_client_deliverables(all_videos, client_info):
+    """Compare monthly video delivery counts against package commitments."""
+    today = date.today()
+    first_of_month = today.replace(day=1)
+
+    client_counts = {}
+
+    for v in all_videos:
+        fields = v["fields"]
+        status = fields.get("Editing Status", "")
+        client_ids = fields.get("Client", [])
+        if not client_ids:
+            continue
+
+        cid = client_ids[0] if isinstance(client_ids, list) else client_ids
+        info = client_info.get(cid)
+        if not info:
+            continue
+
+        # Only track Current/Onboarding clients
+        if info["status"] not in ("Current", "Onboarding"):
+            continue
+
+        name = info["name"]
+        if name not in client_counts:
+            client_counts[name] = {
+                "delivered": 0,
+                "active": 0,
+                "deliverables_raw": info.get("deliverables", ""),
+            }
+
+        # Count active (non-completed)
+        if status and "100 -" not in status and "DONE" not in status:
+            client_counts[name]["active"] += 1
+
+        # Count delivered this month
+        if "100 -" in status or "DONE" in status:
+            modified_str = fields.get("Last Modified (Editing Status)", "")
+            if modified_str:
+                try:
+                    modified_date = datetime.fromisoformat(
+                        modified_str.replace("Z", "+00:00")
+                    ).date()
+                    if modified_date >= first_of_month:
+                        client_counts[name]["delivered"] += 1
+                except (ValueError, TypeError):
+                    pass
+
+    # Parse deliverables targets and build results
+    results = []
+    for name, counts in sorted(client_counts.items()):
+        target_str = str(counts["deliverables_raw"]).lower()
+        # Remove resolution numbers (720, 1080, 2160, 4k)
+        cleaned = re.sub(r"\b(720|1080|2160|4k)\w*", "", target_str)
+        nums = re.findall(r"\d+", cleaned)
+        package = int(nums[0]) if nums else 0
+
+        delivered = counts["delivered"]
+        remaining = max(0, package - delivered) if package > 0 else 0
+
+        results.append({
+            "client": name,
+            "package": f"{package}/mo" if package > 0 else "?",
+            "delivered": delivered,
+            "active": counts["active"],
+            "remaining": remaining,
+            "on_track": delivered >= package if package > 0 else None,
+        })
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Markdown output
+# ---------------------------------------------------------------------------
+
+def format_markdown_report(results, hours):
+    """Format all check results as markdown tables."""
+    lines = []
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    lines.append("## Crosscheck Report")
+    lines.append(f"Generated: {now} | Lookback: {hours}h")
+    lines.append("")
+
+    # Status discrepancies
+    if "status_discrepancies" in results:
+        items = results["status_discrepancies"]
+        lines.append(f"### Status Discrepancies ({len(items)} found)")
+        if items:
+            lines.append("| Video | Editor | Airtable Status | Slack Says | When |")
+            lines.append("|-------|--------|----------------|------------|------|")
+            for d in items:
+                slack_preview = d["slack_says"][:60].replace("|", "/")
+                lines.append(
+                    f"| {d['video']} | {d['editor']} | {d['airtable_status']} "
+                    f"| \"{slack_preview}\" | {d['when'][:16]} |"
+                )
+        else:
+            lines.append("All statuses in sync.")
+        lines.append("")
+
+    # Communication gaps
+    if "communication_gaps" in results:
+        items = results["communication_gaps"]
+        lines.append(f"### Communication Gaps ({len(items)} found)")
+        if items:
+            lines.append("| Editor | Active Videos | Silent For |")
+            lines.append("|--------|--------------|------------|")
+            for g in items:
+                vids = ", ".join(g["active_videos"][:3])
+                if len(g["active_videos"]) > 3:
+                    vids += f" +{len(g['active_videos']) - 3}"
+                lines.append(f"| {g['editor']} | {vids} | {g['silent_hours']}h+ |")
+        else:
+            lines.append("All editor channels have recent activity.")
+        lines.append("")
+
+    # Deliverables
+    total_delivered = 0
+    total_package = 0
+    if "client_deliverables" in results:
+        items = results["client_deliverables"]
+        month = datetime.now().strftime("%b %Y")
+        total_delivered = sum(d["delivered"] for d in items)
+        total_package = sum(
+            int(d["package"].split("/")[0])
+            for d in items
+            if d["package"] != "?"
+        )
+
+        lines.append(f"### Deliverables This Month ({month})")
+        if items:
+            lines.append("| Client | Package | Delivered | Active | Remaining |")
+            lines.append("|--------|---------|-----------|--------|-----------|")
+            for d in items:
+                remaining = str(d["remaining"]) if d["remaining"] > 0 else "-"
+                lines.append(
+                    f"| {d['client']} | {d['package']} | {d['delivered']} "
+                    f"| {d['active']} | {remaining} |"
+                )
+        else:
+            lines.append("No active clients with deliverables data.")
+        lines.append("")
+
+    # Summary line
+    lines.append("---")
+    summary_parts = []
+    if "status_discrepancies" in results:
+        n = len(results["status_discrepancies"])
+        summary_parts.append(f"{n} discrepanc{'y' if n == 1 else 'ies'} found")
+    if "communication_gaps" in results:
+        n = len(results["communication_gaps"])
+        summary_parts.append(f"{n} editor{'s' if n != 1 else ''} silent")
+    if total_package > 0:
+        summary_parts.append(f"{total_delivered} of {total_package} monthly videos delivered")
+    if summary_parts:
+        lines.append(f"**{'. '.join(summary_parts)}.**")
+
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def main():
-    parser = argparse.ArgumentParser(description='Cross-check Slack and Airtable data')
-    parser.add_argument('--check', choices=['all', 'status', 'urgent', 'gaps'],
-                        default='all', help='Type of check to run')
-    parser.add_argument('--hours', type=int, default=48,
-                        help='Hours to look back for Slack activity (default: 48)')
-    parser.add_argument('--output', choices=['json', 'summary'], default='summary',
-                        help='Output format')
+    parser = argparse.ArgumentParser(description="Cross-check Slack and Airtable data")
+    parser.add_argument(
+        "--check",
+        choices=["all", "status", "gaps", "deliverables"],
+        default="all",
+        help="Type of check to run (default: all)",
+    )
+    parser.add_argument(
+        "--hours",
+        type=int,
+        default=48,
+        help="Hours to look back for Slack activity (default: 48)",
+    )
+    parser.add_argument(
+        "--output",
+        choices=["json", "markdown"],
+        default="markdown",
+        help="Output format (default: markdown)",
+    )
 
     args = parser.parse_args()
 
     try:
-        print("Fetching Airtable data...", file=sys.stderr)
-        videos, client_lookup = get_airtable_data()
-
-        print("Connecting to Slack...", file=sys.stderr)
-        slack_client = get_slack_client()
+        # Phase 1: Airtable data
+        print("Phase 1: Fetching Airtable data...", file=sys.stderr)
+        client_map = get_client_map()
+        editor_map = get_editor_map()
+        client_info = get_client_info()
+        active_videos = get_active_videos()
 
         results = {}
 
-        if args.check in ['all', 'status']:
-            print("Checking status discrepancies...", file=sys.stderr)
-            results['status_discrepancies'] = check_status_discrepancies(
-                videos, client_lookup, slack_client, args.hours
+        # Phase 2: Run checks
+        if args.check in ("all", "status"):
+            print("Phase 2: Checking status discrepancies...", file=sys.stderr)
+            results["status_discrepancies"] = check_status_discrepancies(
+                active_videos, client_map, editor_map, args.hours
             )
 
-        if args.check in ['all', 'urgent']:
-            print("Checking urgent items without activity...", file=sys.stderr)
-            results['urgent_without_activity'] = check_urgent_without_activity(
-                videos, client_lookup, slack_client, args.hours
+        if args.check in ("all", "gaps"):
+            print("Phase 2: Checking communication gaps...", file=sys.stderr)
+            results["communication_gaps"] = check_communication_gaps(
+                active_videos, client_map, editor_map, args.hours
             )
 
-        if args.check in ['all', 'gaps']:
-            print("Checking communication gaps...", file=sys.stderr)
-            results['communication_gaps'] = check_communication_gaps(
-                videos, client_lookup, slack_client, args.hours
+        if args.check in ("all", "deliverables"):
+            print("Phase 2: Checking client deliverables...", file=sys.stderr)
+            all_videos = get_all_videos()
+            results["client_deliverables"] = check_client_deliverables(
+                all_videos, client_info
             )
 
-        if args.output == 'json':
+        # Phase 3: Output
+        if args.output == "json":
             print(json.dumps(results, indent=2))
         else:
-            # Summary output
-            print("\n" + "="*60)
-            print("SLACK-AIRTABLE CROSS-CHECK REPORT")
-            print(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
-            print(f"Looking back: {args.hours} hours")
-            print("="*60 + "\n")
-
-            if 'status_discrepancies' in results:
-                items = results['status_discrepancies']
-                print(f"## STATUS DISCREPANCIES ({len(items)} found)")
-                if items:
-                    for item in items:
-                        print(f"\nVideo #{item['video_id']} ({item['editor']})")
-                        print(f"  Airtable: {item['airtable_status']}")
-                        print(f"  Slack ({item['message_time']}): \"{item['slack_message']}...\"")
-                        print(f"  [!] {item['issue']}")
-                else:
-                    print("  None found - statuses appear in sync")
-                print()
-
-            if 'urgent_without_activity' in results:
-                items = results['urgent_without_activity']
-                print(f"## URGENT ITEMS WITHOUT SLACK ACTIVITY ({len(items)} found)")
-                if items:
-                    for item in items:
-                        print(f"\nVideo #{item['video_id']} | {item['client']} | {item['editor']}")
-                        print(f"  Status: {item['status']}")
-                        print(f"  Urgency: {item['urgency']}")
-                        print(f"  [!] {item['issue']}")
-                else:
-                    print("  None found - all urgent items have recent activity")
-                print()
-
-            if 'communication_gaps' in results:
-                items = results['communication_gaps']
-                print(f"## COMMUNICATION GAPS ({len(items)} found)")
-                if items:
-                    for item in items:
-                        print(f"\nEditor: {item['editor']} (Channel: {item['channel_id']})")
-                        print(f"  Active videos: {item['active_videos']}")
-                        print(f"  [!] {item['issue']}")
-                else:
-                    print("  None found - all editor channels have recent activity")
-                print()
+            print(format_markdown_report(results, args.hours))
 
         return 0
 
     except Exception as e:
-        print(json.dumps({'error': str(e)}))
+        print(json.dumps({"error": str(e)}))
+        import traceback
+        traceback.print_exc(file=sys.stderr)
         return 1
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     sys.exit(main())

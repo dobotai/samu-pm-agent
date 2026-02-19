@@ -289,4 +289,121 @@ Clients get an autonomous AI assistant tailored to their domain. Not just automa
 
 Be pragmatic. Be reliable. Self-anneal.
 
-Also, use Opus-4.5 for everything while building. It came out a few days ago and is an order of magnitude better than Sonnet and other models. If you can't find it, look it up first.
+Also, use Opus-4.6 for everything while building. It came out a few days ago and is an order of magnitude better than Sonnet and other models. If you can't find it, look it up first.
+
+## PM Workflow — Responding to Simon
+
+Simon is the PM. He uses Claude Code as his daily operations tool. When he asks questions, run the right script and present the raw output. Do not reformat, summarize, or add commentary unless he asks.
+
+### Editor Task Report
+
+**Triggers:** Simon asks for the report, priorities, status overview, daily check, "what's going on", "what do I need to do", or anything about the state of editors/videos.
+
+**Run:**
+```
+python execution/editor_task_report.py
+```
+
+This outputs a prioritized action report grouped by what Simon needs to do:
+- **DO FIRST** — Videos needing QC (status 60)
+- **SCHEDULE NOW** — Videos approved by client (status 80)
+- **FOLLOW UP** — Editor revisions in progress (status 59)
+- **MONITOR** — Waiting on client response (status 75)
+- **IN PROGRESS** — With editors, not yet submitted (status 41/50)
+- **SILENT EDITORS** — No Slack activity in scan window
+
+**CRITICAL: Present the script output exactly as printed.**
+- Show the FULL raw markdown output with ALL tables
+- Do NOT summarize, reformat, or strip sections
+- Do NOT say "here's a summary" or condense the data
+- Simon needs to see the actual table data to make decisions
+
+**Exception:** If Simon explicitly asks for a summary, then summarize. Otherwise, always show full output.
+
+**Variations:**
+- Specific editor: `--editor sakib`
+- Longer Slack lookback: `--hours 72`
+- Per-editor deep dive: `--format editor`
+- Both flags combine: `--editor megh --format editor`
+
+### Client Status Report
+
+**Triggers:** Simon asks "how are the clients", "client status", "any unhappy clients", "who needs follow up", "client sentiment", "client risk", or anything about client satisfaction/mood.
+
+**Run:**
+```
+python execution/client_status_report.py
+```
+
+This scans all `*-client` Slack channels and cross-references Airtable video data. Output is markdown tables grouped by risk level.
+
+**Key columns:**
+- **Pipeline** — Video count with status breakdown (e.g. `4 (2 QC, 1 editing, 1 client rev)`)
+- **Ball** — Who needs to act: `Reply (3h ago)` = we owe them a reply; `Waiting (2d ago)` = their turn
+- **Mood** — Sentiment from messages (Happy, Neutral, Concerned, Seeking Updates, Quiet)
+- **Risk Factors** — Shows unanswered message preview, churn signals, slow response time
+
+**Risk groups:**
+- **HIGH RISK** — Churn signals detected OR 2+ risk factors
+- **MEDIUM RISK** — 1 risk factor (slow response, unanswered, or negative sentiment)
+- **HEALTHY** — Low risk, active conversations
+- **QUIET** — No messages in scan window
+
+**CRITICAL: Present the script output exactly as printed.**
+- Show the FULL raw markdown output with ALL tables
+- Do NOT summarize, reformat, or strip sections
+- Do NOT say "here's a summary" or condense the data
+- Simon needs to see ALL client rows with Ball/Mood/Risk columns
+
+**Exception:** If the report has 50+ clients and becomes unreadable, you may show full output + brief summary. Otherwise, always show full output.
+
+**Variations:**
+- Specific client: `--client Christian`
+- Shorter lookback: `--hours 24`
+- JSON output: `--output json`
+
+### Crosscheck Report
+
+**Triggers:** Simon asks "any discrepancies", "is Airtable up to date", "crosscheck", "who said done but didn't update", "deliverables tracking", "how many videos delivered this month", or anything about Slack vs Airtable consistency.
+
+**Run:**
+```
+python execution/slack_airtable_crosscheck.py
+```
+
+This cross-references Slack editor channels with Airtable to find:
+- **Status discrepancies** — Editor said "done" in Slack but Airtable status not updated
+- **Communication gaps** — Editor channels with active videos but zero messages
+- **Deliverables** — Monthly video delivery count vs client package commitment
+
+Present the script output exactly as printed.
+
+**Variations:**
+- Status check only: `--check status`
+- Deliverables only: `--check deliverables`
+- Communication gaps only: `--check gaps`
+- Longer lookback: `--hours 72`
+- JSON output: `--output json`
+
+### End-of-Day Checkout
+
+**Triggers:** Simon says "checkout", "log off", "end of day", "EOD message", "what did I do today", "send Samu the update", or anything about wrapping up for the day.
+
+**Run:**
+```
+python execution/checkout_message.py
+```
+
+This generates a structured end-of-day message for Samu with:
+- **Completed today** — Videos that hit milestones (QC'd, sent to client, scheduled, approved)
+- **In progress** — Current pipeline grouped by status
+- **Needs morning attention** — QC items pending, clients waiting 48h+
+
+Present the script output exactly as printed. Simon can copy it to Samu's DM.
+
+**Variations:**
+- JSON output: `--output json`
+
+### Reference
+
+Full PM context, decision frameworks, and communication patterns are in `directives/pm_skills_bible.md`. Consult it when Simon asks about escalation rules, editor assignments, payment days, or communication templates.

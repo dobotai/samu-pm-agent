@@ -35,7 +35,7 @@ Your #1 job: surface things that need action. Every message you write should mak
 
 Rules:
 - Format for Slack DM: use *bold* for emphasis, bullet points, and minimal emoji
-- ALWAYS use "ClientName Video #X" format (e.g., "Taylor Video #11"). NEVER show raw Video IDs or Airtable record IDs
+- ALWAYS use "ClientName Video #X" format (e.g., "Taylor Video #11"). NEVER show raw Video IDs (like "VID-2024-XXXX") or Airtable record IDs (like "rec..."). If you see any raw IDs in the data, resolve them to the "ClientName Video #X" format or omit them
 - Include editor names and video status when relevant
 - Keep the total message under 2000 characters for Slack readability
 - ALWAYS end with a numbered *Action Items* list — concrete tasks with specific details (names, counts, deadlines)
@@ -57,6 +57,7 @@ def build_prompt(input_data: dict, recipient_name: str, time_of_day: str) -> str
         "morning": "Morning Update (9:30 AM)",
         "midday": "Midday Update (12:15 PM)",
         "afternoon": "Afternoon Wrap-up (3:00 PM)",
+        "logoff": "End of Day Wrap-up (5:30 PM)",
     }
     label = time_labels.get(time_of_day, "Status Update")
 
@@ -91,6 +92,7 @@ def build_prompt(input_data: dict, recipient_name: str, time_of_day: str) -> str
         "morning": "Give a comprehensive overview of what needs attention today. Set the agenda.",
         "midday": "Focus on changes since the morning. What's progressed? What's stalled? Any new blockers?",
         "afternoon": "Wrap up the day. What was accomplished? What's still open? What carries over to tomorrow?",
+        "logoff": "Wrap up the day completely. What was accomplished? What's still open and carries over to tomorrow? If a day_rating is provided in the data, include it prominently. End with a 'Tomorrow Priorities' list.",
     }
     tone = tone_guide.get(time_of_day, "Provide a balanced status update.")
 

@@ -245,8 +245,13 @@ def format_video(record, editors, clients):
     editor_ids = fields.get('Assigned Editor', [])
     editor_name = editors.get(editor_ids[0], 'Unassigned') if editor_ids else 'Unassigned'
 
+    video_num = fields.get('Video Number', '?')
+    fmt = str(fields.get('Format', '')).lower()
+    video_type = 'Shorts' if 'short' in fmt else 'Video'
+    display_name = f"{client_name} {video_type} #{video_num}"
+
     return {
-        'video_id': fields.get('Video ID'),
+        'video_id': display_name,
         'client': client_name,
         'editor': editor_name,
         'status': fields.get('Editing Status', 'Unknown'),
@@ -475,7 +480,7 @@ def print_report(report):
         print(f"{'-'*70}")
         print("Do these FIRST - your #1 daily task!")
         for v in needs_qc:
-            print(f"  {v['video_id']:<6} | {v['client']:<18} | {v['editor']:<12} | Due: {v['deadline']}")
+            print(f"  {v['video_id']:<30} | {v['editor']:<12} | Due: {v['deadline']}")
 
     # PRIORITY 2: Ready to Schedule
     ready = report.get('ready_to_schedule', [])
@@ -485,7 +490,7 @@ def print_report(report):
         print(f"{'-'*70}")
         print("Client approved - schedule these on YouTube!")
         for v in ready:
-            print(f"  {v['video_id']:<6} | {v['client']:<18} | Due: {v['deadline']}")
+            print(f"  {v['video_id']:<30} | Due: {v['deadline']}")
 
     # Videos in Revision - need follow-up with editors
     in_revision = report.get('in_revision', [])
@@ -495,7 +500,7 @@ def print_report(report):
         print(f"{'-'*70}")
         print("Check with editors on progress!")
         for v in in_revision:
-            print(f"  {v['video_id']:<6} | {v['client']:<18} | {v['editor']:<12} | Due: {v['deadline']}")
+            print(f"  {v['video_id']:<30} | {v['editor']:<12} | Due: {v['deadline']}")
 
     # Sent to Client - awaiting review
     sent_to_client = report.get('sent_to_client', [])
@@ -505,7 +510,7 @@ def print_report(report):
         print(f"{'-'*70}")
         print("Waiting on client feedback - follow up if needed")
         for v in sent_to_client:
-            print(f"  {v['video_id']:<6} | {v['client']:<18} | Due: {v['deadline']}")
+            print(f"  {v['video_id']:<30} | Due: {v['deadline']}")
 
     # ACTION REQUIRED - Our fault
     our_fault = report['analysis']['our_fault']
@@ -515,7 +520,7 @@ def print_report(report):
         print(f"{'-'*70}")
         for v in our_fault:
             analysis = v.get('analysis', {})
-            print(f"\n  Video {v['video_id']} | {v['client']} | {v['editor']} | Due: {v['deadline']}")
+            print(f"\n  {v['video_id']} | {v['editor']} | Due: {v['deadline']}")
             print(f"  Status: {v['status']}")
             print(f"  >> {analysis.get('summary', 'No analysis')}")
             print(f"  Action: {analysis.get('action_needed', 'Unknown')}")
@@ -528,7 +533,7 @@ def print_report(report):
         print(f"{'-'*70}")
         for v in client_fault:
             analysis = v.get('analysis', {})
-            print(f"\n  Video {v['video_id']} | {v['client']} | Due: {v['deadline']}")
+            print(f"\n  {v['video_id']} | Due: {v['deadline']}")
             print(f"  Status: {v['status']}")
             print(f"  >> {analysis.get('summary', 'No analysis')}")
 
