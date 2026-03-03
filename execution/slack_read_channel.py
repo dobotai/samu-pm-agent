@@ -118,6 +118,7 @@ def read_slack_channel(channel, limit=100, since_hours=None, include_threads=Tru
                 'datetime': dt.strftime('%Y-%m-%d %H:%M:%S'),
                 'thread_ts': msg.get('thread_ts'),
                 'reply_count': msg.get('reply_count', 0),
+                'reactions': msg.get('reactions', []),
                 'thread_replies': []
             })
 
@@ -155,6 +156,7 @@ def read_slack_channel(channel, limit=100, since_hours=None, include_threads=Tru
                                 'user_id': reply_user_id,
                                 'timestamp': reply.get('ts'),
                                 'datetime': reply_dt.strftime('%Y-%m-%d %H:%M:%S'),
+                                'reactions': reply.get('reactions', []),
                             })
                         threads_fetched += 1
                     except SlackApiError:

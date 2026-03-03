@@ -32,6 +32,10 @@ from slack_read_channel import read_slack_channel
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "tools"))
 from utils import format_video_ref, get_client_map, resolve_editor_name, get_editor_map
+from constants import (
+    QC_STATUSES, POST_DEADLINE_STATUSES, INACTIVE_CLIENT_STATUSES,
+    ALL_ACTIVE_STATUSES, STATUS_ORDER, STATUS_STALE_DAYS,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -47,6 +51,7 @@ def get_active_videos():
             "Video Number", "Client", "Editing Status", "Format",
             "Assigned Editor", "Editor's Name",
             "Editor's Slack Channel", "Slack ID Channel (from Assigned Editor)",
+            "Last Modified (Editing Status)",
         ],
     )
 
@@ -79,7 +84,14 @@ def get_client_info():
 # Check 1: Status discrepancies
 # ---------------------------------------------------------------------------
 
-COMPLETION_KEYWORDS = ["done", "finished", "completed", "uploaded", "sent", "delivered", "ready"]
+# Completion keywords — must be specific to avoid false positives.
+# "sent" alone matches "sent the footage" (client uploading, not editor finishing).
+# "ready" alone matches "ready to start" (not completion).
+COMPLETION_KEYWORDS = [
+    "done", "finished", "completed", "uploaded", "delivered",
+    "sent for review", "submitted for qc", "ready for review",
+    "ready for qc", "ready for checking",
+]
 
 
 def check_status_discrepancies(active_videos, client_map, editor_map, hours=48):
@@ -90,8 +102,9 @@ def check_status_discrepancies(active_videos, client_map, editor_map, hours=48):
         fields = v["fields"]
         status = fields.get("Editing Status", "")
 
-        # Skip statuses already past editing (sent to client, approved)
-        if any(s in status for s in ["75 -", "80 -"]):
+        # Skip statuses already past editing (sent to client, approved, done)
+        skip_statuses = POST_DEADLINE_STATUSES + ["75 - Sent to Client For Review"]
+        if status in skip_statuses:
             continue
 
         channel_ids = (
@@ -104,12 +117,55 @@ def check_status_discrepancies(active_videos, client_map, editor_map, hours=48):
         ch_id = channel_ids[0] if isinstance(channel_ids, list) else channel_ids
         channel_videos.setdefault(ch_id, []).append(v)
 
+    # Keywords that CONFIRM a QC status (not contradict it)
+    QC_CONSISTENT_KEYWORDS = {
+        "ready for review", "submitted for qc",
+        "ready for qc", "ready for checking",
+    }
+
     discrepancies = []
 
+    def _check_msg_for_discrepancy(msg, display_name, editor, status,
+                                    client_name, video_num):
+        """Check a single message (top-level or thread reply) for completion keywords."""
+        # Skip Airtable bot messages
+        sender = msg.get("user", "").lower()
+        username = msg.get("username", "")
+        if sender == "airtable" or "airtable" in str(username).lower():
+            return
+
+        text = msg.get("text", "").lower()
+
+        # Require BOTH client name AND video number to avoid false positives
+        has_client = client_name and client_name.lower() in text
+        has_num = video_num and (
+            f"#{video_num}" in text
+            or f"video {video_num}" in text
+            or f"video #{video_num}" in text
+            or f"{client_name.lower()}{video_num}" in text
+        )
+        if not (has_client and has_num):
+            return
+
+        for keyword in COMPLETION_KEYWORDS:
+            if keyword in text:
+                if keyword in QC_CONSISTENT_KEYWORDS and status in QC_STATUSES:
+                    break
+                msg_time = msg.get("datetime", "")
+                discrepancies.append({
+                    "video": display_name,
+                    "editor": editor,
+                    "airtable_status": status,
+                    "slack_says": msg.get("text", "")[:120],
+                    "when": msg_time,
+                    "issue": f"Slack mentions '{keyword}' but Airtable is '{status}'",
+                })
+                break
+
     for ch_id, videos in channel_videos.items():
-        # Read channel messages once per channel
+        # Read channel messages once per channel (with threads)
         try:
-            messages = read_slack_channel(ch_id, since_hours=hours, include_threads=False)
+            messages = read_slack_channel(ch_id, since_hours=hours, include_threads=True, max_threads=20)
         except Exception:
             continue
 
@@ -123,7 +179,6 @@ def check_status_discrepancies(active_videos, client_map, editor_map, hours=48):
             status = fields.get("Editing Status", "")
             video_num = str(fields.get("Video Number", ""))
 
-            # Resolve client name for matching
             client_ids = fields.get("Client", [])
             client_name = ""
             if client_ids and client_map:
@@ -131,31 +186,14 @@ def check_status_discrepancies(active_videos, client_map, editor_map, hours=48):
                 client_name = client_map.get(cid, "")
 
             for msg in messages:
-                text = msg.get("text", "").lower()
-
-                # Require BOTH client name AND video number to avoid false positives
-                has_client = client_name and client_name.lower() in text
-                has_num = video_num and (
-                    f"#{video_num}" in text
-                    or f"video {video_num}" in text
-                    or f"video #{video_num}" in text
-                    or f"{client_name.lower()}{video_num}" in text
+                _check_msg_for_discrepancy(
+                    msg, display_name, editor, status, client_name, video_num
                 )
-                if not (has_client and has_num):
-                    continue
-
-                for keyword in COMPLETION_KEYWORDS:
-                    if keyword in text:
-                        msg_time = msg.get("datetime", "")
-                        discrepancies.append({
-                            "video": display_name,
-                            "editor": editor,
-                            "airtable_status": status,
-                            "slack_says": msg.get("text", "")[:120],
-                            "when": msg_time,
-                            "issue": f"Slack mentions '{keyword}' but Airtable is '{status}'",
-                        })
-                        break  # one match per message is enough
+                # Also check thread replies
+                for reply in msg.get("thread_replies", []):
+                    _check_msg_for_discrepancy(
+                        reply, display_name, editor, status, client_name, video_num
+                    )
 
     return discrepancies
 
@@ -172,8 +210,9 @@ def check_communication_gaps(active_videos, client_map, editor_map, hours=72):
         fields = v["fields"]
         status = fields.get("Editing Status", "")
 
-        # Only check videos currently with editors (not sent to client / approved)
-        if any(s in status for s in ["75 -", "80 -"]):
+        # Only check videos currently with editors (not sent to client / approved / done)
+        skip_statuses = POST_DEADLINE_STATUSES + ["75 - Sent to Client For Review"]
+        if status in skip_statuses:
             continue
 
         channel_ids = (
@@ -190,11 +229,15 @@ def check_communication_gaps(active_videos, client_map, editor_map, hours=72):
 
     for ch_id, videos in channel_videos.items():
         try:
-            messages = read_slack_channel(ch_id, since_hours=hours, include_threads=False)
+            messages = read_slack_channel(ch_id, since_hours=hours, include_threads=True, max_threads=10)
         except Exception:
             messages = []
 
-        if not messages:
+        # Count total activity including thread replies
+        has_activity = bool(messages) or any(
+            msg.get("thread_replies") for msg in (messages or [])
+        )
+        if not has_activity:
             editor = resolve_editor_name(videos[0]["fields"], editor_map)
             video_refs = [format_video_ref(v["fields"], client_map) for v in videos]
             gaps.append({
@@ -210,6 +253,44 @@ def check_communication_gaps(active_videos, client_map, editor_map, hours=72):
 # ---------------------------------------------------------------------------
 # Check 3: Client deliverables
 # ---------------------------------------------------------------------------
+
+def _parse_deliverables(raw_str):
+    """Parse a deliverables string into structured counts.
+
+    Handles compound packages:
+        "4 long-form + 2 shorts" -> {long_form: 4, shorts: 2, total: 6}
+        "6/mo"                   -> {long_form: 6, shorts: 0, total: 6}
+        "4 long-form"            -> {long_form: 4, shorts: 0, total: 4}
+        "8"                      -> {long_form: 8, shorts: 0, total: 8}
+    """
+    if not raw_str:
+        return {"long_form": 0, "shorts": 0, "total": 0}
+
+    text = str(raw_str).lower()
+    # Remove resolution numbers (720p, 1080p, 2160p, 4k)
+    text = re.sub(r"\b(720|1080|2160|4k)\w*", "", text)
+
+    long_form = 0
+    shorts = 0
+
+    # Try to find "X shorts" or "X short-form"
+    shorts_match = re.search(r"(\d+)\s*(?:short|shorts|short-form)", text)
+    if shorts_match:
+        shorts = int(shorts_match.group(1))
+
+    # Try to find "X long-form" or "X long" or "X videos" or "X/mo"
+    long_match = re.search(r"(\d+)\s*(?:long-form|long|videos?|/mo)", text)
+    if long_match:
+        long_form = int(long_match.group(1))
+    elif not shorts_match:
+        # Fallback: just grab the first number
+        nums = re.findall(r"\d+", text)
+        if nums:
+            long_form = int(nums[0])
+
+    total = long_form + shorts
+    return {"long_form": long_form, "shorts": shorts, "total": total}
+
 
 def check_client_deliverables(all_videos, client_info):
     """Compare monthly video delivery counts against package commitments."""
@@ -230,8 +311,8 @@ def check_client_deliverables(all_videos, client_info):
         if not info:
             continue
 
-        # Only track Current/Onboarding clients
-        if info["status"] not in ("Current", "Onboarding"):
+        # Only track active clients
+        if info["status"] in INACTIVE_CLIENT_STATUSES:
             continue
 
         name = info["name"]
@@ -262,25 +343,95 @@ def check_client_deliverables(all_videos, client_info):
     # Parse deliverables targets and build results
     results = []
     for name, counts in sorted(client_counts.items()):
-        target_str = str(counts["deliverables_raw"]).lower()
-        # Remove resolution numbers (720, 1080, 2160, 4k)
-        cleaned = re.sub(r"\b(720|1080|2160|4k)\w*", "", target_str)
-        nums = re.findall(r"\d+", cleaned)
-        package = int(nums[0]) if nums else 0
+        parsed = _parse_deliverables(counts["deliverables_raw"])
+        package_total = parsed["total"]
+
+        # Display format: "4LF+2S/mo" or "6/mo" or "?"
+        if parsed["shorts"] > 0:
+            package_str = f"{parsed['long_form']}LF+{parsed['shorts']}S/mo"
+        elif package_total > 0:
+            package_str = f"{package_total}/mo"
+        else:
+            package_str = "?"
 
         delivered = counts["delivered"]
-        remaining = max(0, package - delivered) if package > 0 else 0
+        remaining = max(0, package_total - delivered) if package_total > 0 else 0
 
         results.append({
             "client": name,
-            "package": f"{package}/mo" if package > 0 else "?",
+            "package": package_str,
+            "package_total": package_total,
             "delivered": delivered,
             "active": counts["active"],
             "remaining": remaining,
-            "on_track": delivered >= package if package > 0 else None,
+            "on_track": delivered >= package_total if package_total > 0 else None,
         })
 
     return results
+
+
+# ---------------------------------------------------------------------------
+# Check 4: Stale statuses
+# ---------------------------------------------------------------------------
+
+def check_stale_statuses(active_videos, client_map, editor_map):
+    """Find videos stuck at the same status for too long.
+
+    Uses STATUS_STALE_DAYS thresholds from constants.py.
+    Returns list of {video, editor, status, days_stuck, threshold}.
+    """
+    stale = []
+    now = datetime.now()
+
+    for v in active_videos:
+        fields = v["fields"]
+        status = fields.get("Editing Status", "")
+        threshold = STATUS_STALE_DAYS.get(status)
+        if not threshold:
+            continue
+
+        lm = fields.get("Last Modified (Editing Status)", "")
+        if not lm:
+            continue
+
+        try:
+            modified_dt = datetime.fromisoformat(lm.replace("Z", "+00:00"))
+            days_stuck = (now.astimezone(modified_dt.tzinfo) - modified_dt).days
+        except (ValueError, TypeError):
+            continue
+
+        if days_stuck >= threshold:
+            stale.append({
+                "video": format_video_ref(fields, client_map),
+                "editor": resolve_editor_name(fields, editor_map),
+                "status": status.split(" - ", 1)[-1] if " - " in status else status,
+                "days_stuck": days_stuck,
+                "threshold": threshold,
+            })
+
+    stale.sort(key=lambda s: -s["days_stuck"])
+    return stale
+
+
+# ---------------------------------------------------------------------------
+# Check 5: Assignment gaps
+# ---------------------------------------------------------------------------
+
+def check_assignment_gaps(deliverables_results):
+    """Find clients with remaining deliverables but zero active videos.
+
+    Uses the output of check_client_deliverables.
+    Returns list of {client, remaining, package}.
+    """
+    gaps = []
+    for d in deliverables_results:
+        if d["remaining"] > 0 and d["active"] == 0:
+            gaps.append({
+                "client": d["client"],
+                "remaining": d["remaining"],
+                "package": d["package"],
+            })
+    return gaps
 
 
 # ---------------------------------------------------------------------------
@@ -328,31 +479,50 @@ def format_markdown_report(results, hours):
             lines.append("All editor channels have recent activity.")
         lines.append("")
 
-    # Deliverables
-    total_delivered = 0
-    total_package = 0
-    if "client_deliverables" in results:
-        items = results["client_deliverables"]
-        month = datetime.now().strftime("%b %Y")
-        total_delivered = sum(d["delivered"] for d in items)
-        total_package = sum(
-            int(d["package"].split("/")[0])
-            for d in items
-            if d["package"] != "?"
-        )
-
-        lines.append(f"### Deliverables This Month ({month})")
+    # Stale statuses
+    if "stale_statuses" in results:
+        items = results["stale_statuses"]
+        lines.append(f"### Stale Statuses ({len(items)} found)")
         if items:
-            lines.append("| Client | Package | Delivered | Active | Remaining |")
-            lines.append("|--------|---------|-----------|--------|-----------|")
-            for d in items:
-                remaining = str(d["remaining"]) if d["remaining"] > 0 else "-"
+            lines.append("| Video | Editor | Status | Days Stuck | Expected |")
+            lines.append("|-------|--------|--------|-----------|----------|")
+            for s in items:
                 lines.append(
-                    f"| {d['client']} | {d['package']} | {d['delivered']} "
-                    f"| {d['active']} | {remaining} |"
+                    f"| {s['video']} | {s['editor']} | {s['status']} "
+                    f"| {s['days_stuck']}d | <{s['threshold']}d |"
                 )
         else:
-            lines.append("No active clients with deliverables data.")
+            lines.append("No stale statuses found.")
+        lines.append("")
+
+    # Assignment gaps
+    if "assignment_gaps" in results and results["assignment_gaps"]:
+        gaps = results["assignment_gaps"]
+        lines.append(f"### Assignment Gaps ({len(gaps)} clients)")
+        lines.append("Need videos assigned to meet monthly package:")
+        for g in gaps:
+            lines.append(f"- **{g['client']}** -- {g['remaining']} remaining of {g['package']}, 0 active")
+        lines.append("")
+
+    # Recommended Actions
+    recommendations = []
+    if results.get("status_discrepancies"):
+        n = len(results["status_discrepancies"])
+        recommendations.append(f"Update Airtable for {n} discrepant video{'s' if n != 1 else ''}")
+    if results.get("communication_gaps"):
+        n = len(results["communication_gaps"])
+        recommendations.append(f"Follow up with {n} silent editor{'s' if n != 1 else ''}")
+    if results.get("stale_statuses"):
+        n = len(results["stale_statuses"])
+        recommendations.append(f"Check {n} stale video{'s' if n != 1 else ''}")
+    if results.get("assignment_gaps"):
+        n = len(results["assignment_gaps"])
+        recommendations.append(f"Assign videos for {n} client{'s' if n != 1 else ''} behind on deliverables")
+
+    if recommendations:
+        lines.append("### Recommended Actions")
+        for i, r in enumerate(recommendations, 1):
+            lines.append(f"{i}. {r}")
         lines.append("")
 
     # Summary line
@@ -364,8 +534,12 @@ def format_markdown_report(results, hours):
     if "communication_gaps" in results:
         n = len(results["communication_gaps"])
         summary_parts.append(f"{n} editor{'s' if n != 1 else ''} silent")
-    if total_package > 0:
-        summary_parts.append(f"{total_delivered} of {total_package} monthly videos delivered")
+    if "stale_statuses" in results:
+        n = len(results["stale_statuses"])
+        summary_parts.append(f"{n} stale status{'es' if n != 1 else ''}")
+    if results.get("assignment_gaps"):
+        n = len(results["assignment_gaps"])
+        summary_parts.append(f"{n} client{'s' if n != 1 else ''} need assignments")
     if summary_parts:
         lines.append(f"**{'. '.join(summary_parts)}.**")
 
@@ -380,7 +554,7 @@ def main():
     parser = argparse.ArgumentParser(description="Cross-check Slack and Airtable data")
     parser.add_argument(
         "--check",
-        choices=["all", "status", "gaps", "deliverables"],
+        choices=["all", "status", "gaps", "stale", "deliverables"],
         default="all",
         help="Type of check to run (default: all)",
     )
@@ -422,11 +596,21 @@ def main():
                 active_videos, client_map, editor_map, args.hours
             )
 
+        if args.check in ("all", "stale"):
+            print("Phase 2: Checking stale statuses...", file=sys.stderr)
+            results["stale_statuses"] = check_stale_statuses(
+                active_videos, client_map, editor_map
+            )
+
         if args.check in ("all", "deliverables"):
             print("Phase 2: Checking client deliverables...", file=sys.stderr)
             all_videos = get_all_videos()
             results["client_deliverables"] = check_client_deliverables(
                 all_videos, client_info
+            )
+            # Assignment gaps depend on deliverables results
+            results["assignment_gaps"] = check_assignment_gaps(
+                results["client_deliverables"]
             )
 
         # Phase 3: Output

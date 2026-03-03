@@ -296,13 +296,13 @@ Also, use Opus-4.6 for everything while building. It came out a few days ago and
 Simon is the PM. He uses Claude Code as his daily operations tool.
 
 ### GOLDEN RULE FOR ALL REPORTS
-When Simon asks for ANY report, follow this exact procedure:
+When ANYONE asks for ANY report, follow this exact procedure:
 1. Run the script with `2>NUL` (suppress stderr progress messages)
-2. Take the stdout and output it as your response text — this is what Simon sees
+2. Take the stdout and output it as your response text — this is what the user sees
 3. Do NOT add ANY text before the output (no "Here's the report:", no "Running...", nothing)
 4. Do NOT add ANY text after the output (no summary, no highlights, no commentary)
 5. The script output IS your entire response
-6. Only add commentary if Simon explicitly asks a follow-up question about the data
+6. Only add commentary if the user explicitly asks a follow-up question about the data
 
 ### Editor Task Report
 
@@ -313,13 +313,25 @@ When Simon asks for ANY report, follow this exact procedure:
 python execution/editor_task_report.py
 ```
 
-This outputs a prioritized action report grouped by what Simon needs to do:
-- **DO FIRST** — Videos needing QC (status 60)
-- **SCHEDULE NOW** — Videos approved by client (status 80)
-- **FOLLOW UP** — Editor revisions in progress (status 59)
-- **MONITOR** — Waiting on client response (status 75)
-- **IN PROGRESS** — With editors, not yet submitted (status 41/50)
-- **SILENT EDITORS** — No Slack activity in scan window
+This outputs a prioritized action report with a checkbox checklist at the top and detail tables below:
+
+**Checklist (top of report):**
+- **Deliver now** — Videos needing QC review (status 60), checkbox per video
+- **Schedule immediately** — Videos approved by client (status 80), with days waiting
+- **Due today/tomorrow** — Upcoming deadlines, excluding post-delivery statuses (80/100)
+- **Follow up for approval** — Videos with client for review (status 75), with days waiting
+- **Outreach** — Silent editors with active videos, with escalation action (nudge/WhatsApp)
+
+**Detail tables (below checklist):**
+- **ACTIVE ALERTS** — Revision loops, heavy editor loads, stale QC, Simon unanswered, silent editors with upcoming deadlines
+- **FOLLOW UP — Editor Revisions** — Status 59 videos with deadline
+- **IN PROGRESS — With Editors** — Status 41/50 videos with deadline
+
+**Team sections (bottom):**
+- **BENCH — Available for Assignments** — Editors with 0 active videos, showing last message context
+- **RAM — Thumbnail Pipeline** — Videos needing thumbnails, in revision, or pending feedback
+
+Empty sections are omitted. Inactive clients are filtered out automatically. BENCH and RAM sections are skipped in single-editor mode.
 
 Follow the GOLDEN RULE above — output only, no commentary.
 
@@ -352,6 +364,9 @@ This scans all `*-client` Slack channels and cross-references Airtable video dat
 - **HEALTHY** — Low risk, active conversations
 - **QUIET** — No messages in scan window
 
+**CLIENT CONTEXT section (bottom of report):**
+Shows the last 2-3 raw client messages per channel (not team, not bots). Surfaces actual words for LLM interpretation — things like life events, churn signals, and business context that keyword matching misses. Each message shows time ago and truncated text.
+
 Follow the GOLDEN RULE above — output only, no commentary.
 
 **Variations:**
@@ -361,7 +376,7 @@ Follow the GOLDEN RULE above — output only, no commentary.
 
 ### Crosscheck Report
 
-**Triggers:** Simon asks "any discrepancies", "is Airtable up to date", "crosscheck", "who said done but didn't update", "deliverables tracking", "how many videos delivered this month", or anything about Slack vs Airtable consistency.
+**Triggers:** Simon asks "any discrepancies", "is Airtable up to date", "crosscheck", "who said done but didn't update", "anything stale", or anything about Slack vs Airtable consistency.
 
 **Run:**
 ```
@@ -371,14 +386,15 @@ python execution/slack_airtable_crosscheck.py
 This cross-references Slack editor channels with Airtable to find:
 - **Status discrepancies** — Editor said "done" in Slack but Airtable status not updated
 - **Communication gaps** — Editor channels with active videos but zero messages
-- **Deliverables** — Monthly video delivery count vs client package commitment
+- **Stale statuses** — Videos stuck at the same status past expected thresholds
+- **Assignment gaps** — Clients with remaining deliverables but 0 active videos
 
 Follow the GOLDEN RULE above — output only, no commentary.
 
 **Variations:**
 - Status check only: `--check status`
-- Deliverables only: `--check deliverables`
 - Communication gaps only: `--check gaps`
+- Stale statuses only: `--check stale`
 - Longer lookback: `--hours 72`
 - JSON output: `--output json`
 
@@ -391,12 +407,22 @@ Follow the GOLDEN RULE above — output only, no commentary.
 python execution/checkout_message.py
 ```
 
-This generates a structured end-of-day message for Samu with:
-- **Completed today** — Videos that hit milestones (QC'd, sent to client, scheduled, approved)
-- **In progress** — Current pipeline grouped by status
-- **Needs morning attention** — QC items pending, clients waiting 48h+
+This generates the checkout message in the real `#project-management` Slack format (`• Section- content`), auto-filled from Airtable where possible:
+- **QCs** — Pending QC items, or "qcs all cleared"
+- **Scheduled videos** — Videos scheduled today + any still needing scheduling
+- **Videos sent to client for review** — Compact refs of videos sent to client (status 75) today, e.g. `dan14, arborxr14, ocuco2+3`
+- **Clients followed up with recording** — Clients at "Waiting For Input" status (Simon edits follow-up notes)
+- **Close deadlines** — Videos with deadlines in next 0–2 days, with current status
+- **Additional tasks** — `[fill in]` placeholder (manual)
+- **Reminders leftover** — `[fill in]` placeholder (manual)
+- **Mistakes sheet** — (manual)
+- **Social Posts Completed** — (manual)
 
-Follow the GOLDEN RULE above — output only, no commentary. Simon copies it to Samu's DM.
+Ends with: "I'm starting tomorrow at the usual time!"
+
+Video references use compact format matching Simon's style: `clientname` + video number (e.g. `taylor14`, `christian34+35`).
+
+Follow the GOLDEN RULE above — output only, no commentary. Simon edits the `[fill in]` sections and recording follow-up notes, then copies to `#project-management`.
 
 **Variations:**
 - JSON output: `--output json`
@@ -404,3 +430,14 @@ Follow the GOLDEN RULE above — output only, no commentary. Simon copies it to 
 ### Reference
 
 Full PM context, decision frameworks, and communication patterns are in `directives/pm_skills_bible.md`. Consult it when Simon asks about escalation rules, editor assignments, payment days, or communication templates.
+
+### Ops Manager SOP (Source of Truth)
+
+**Full SOP:** `directives/ops_manager_sop.md` — 14-part canonical reference for all PM operations (video pipeline, Airtable setup, QC workflow, YouTube scheduling, editor payments, client communication, onboarding).
+
+**Key operational learnings (from team meetings):**
+- **Deadline = V1 delivery** (3 days from "Sent to Editor"), not final delivery. Videos past deadline but in revision cycles (59) are normal.
+- **Default client sentiment = Neutral.** "Happy" requires explicit praise (e.g., "really happy how this is turning out"). Professional courtesy ("thanks", "great") is NOT "Happy."
+- **Status 60 has two Airtable variants:** "60 - Submitted for QC" and "60 - Internal Review." Scripts must match both.
+- **Filter inactive clients** from all reports. Use the `INACTIVE_CLIENT_STATUSES` list from `execution/constants.py`.
+- **Centralized status constants** live in `execution/constants.py` — all scripts import from there to prevent naming drift.

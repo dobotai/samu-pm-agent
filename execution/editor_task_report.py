@@ -15,7 +15,7 @@ import sys
 import json
 import re
 import argparse
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -24,6 +24,18 @@ load_dotenv()
 sys.path.insert(0, os.path.dirname(__file__))
 from slack_read_channel import read_slack_channel
 from airtable_read import read_airtable_records
+from slack_list_channels import list_slack_channels
+from constants import (
+    STATUS_ORDER, QC_STATUSES, INACTIVE_CLIENT_STATUSES,
+    EDITOR_ACTIVE_STATUSES, POST_DEADLINE_STATUSES,
+    EDITOR_NUDGE_HOURS, EDITOR_WHATSAPP_HOURS,
+    HEAVY_LOAD_THRESHOLD, REVISION_LOOP_THRESHOLD,
+    STALE_QC_HOURS, STALE_APPROVAL_DAYS,
+    SIMON_SLACK_USER_ID, OPS_MANAGER_IDS,
+    THUMBNAIL_NEEDS_WORK, THUMBNAIL_IN_PROGRESS,
+    THUMBNAIL_IN_REVISION, THUMBNAIL_APPROVED,
+    THUMBNAIL_ACTIVE_STATUSES, RAM_CHANNEL_ID,
+)
 
 
 # ============================================================================
@@ -56,19 +68,6 @@ EDITOR_CHANNELS = {
     "anuj":     {"id": "C0A73RECBQS", "name": "anuj-editing"},
 }
 
-# Status progression order (for priority logic)
-STATUS_ORDER = {
-    "41 - Sent to Editor": 41,
-    "50 - Editor Confirmed": 50,
-    "59 - Editing Revisions": 59,
-    "60 - Submitted for QC": 60,
-    "75 - Sent to Client For Review": 75,
-    "80 - Approved By Client": 80,
-    "100 - Scheduled - DONE": 100,
-    "40 - Client Sent Raw Footage": 40,
-    "Waiting For Input From Client": 35,
-}
-
 URGENT_KEYWORDS = ["urgent", "asap", "critical", "extremely urgent", "immediately", "right away"]
 DONE_KEYWORDS = ["sent to the client for final review", "good job", "approved by client"]
 BLOCKER_KEYWORDS = ["blocked", "waiting", "can't", "missing", "no asset", "doesn't have"]
@@ -90,6 +89,7 @@ def get_airtable_pipeline():
         "{Editing Status}='50 - Editor Confirmed',"
         "{Editing Status}='59 - Editing Revisions',"
         "{Editing Status}='60 - Submitted for QC',"
+        "{Editing Status}='60 - Internal Review',"
         "{Editing Status}='75 - Sent to Client For Review',"
         "{Editing Status}='80 - Approved By Client'"
         ")"
@@ -97,12 +97,17 @@ def get_airtable_pipeline():
     videos = read_airtable_records(
         "Videos",
         filter_formula=active_filter,
-        fields=["Video ID", "Client", "Video Number", "Format", "Editing Status", "Assigned Editor"]
+        fields=["Video ID", "Client", "Video Number", "Format", "Editing Status", "Assigned Editor", "Deadline", "Last Modified (Editing Status)", "Thumbnail Status", "Thumbnail Deadline"]
     )
 
     print("  Fetching client names...", file=sys.stderr)
-    clients_raw = read_airtable_records("Clients", fields=["Name"])
+    clients_raw = read_airtable_records("Clients", fields=["Name", "Status"])
     client_map = {r["id"]: r["fields"].get("Name", "?") for r in clients_raw}
+    inactive_clients = {
+        r["fields"].get("Name", "").lower()
+        for r in clients_raw
+        if r["fields"].get("Status", "") in INACTIVE_CLIENT_STATUSES
+    }
 
     print("  Fetching team members...", file=sys.stderr)
     team_raw = read_airtable_records("Team", fields=["Name"])
@@ -119,6 +124,10 @@ def get_airtable_pipeline():
         client_ids = f.get("Client", [])
         client_name = client_map.get(client_ids[0], "?") if client_ids else "?"
 
+        # Skip videos belonging to inactive/paused/churned clients
+        if client_name.lower() in inactive_clients:
+            continue
+
         video = {
             "video_id": f.get("Video ID"),
             "client": client_name,
@@ -126,6 +135,10 @@ def get_airtable_pipeline():
             "format": f.get("Format", "?"),
             "status": f.get("Editing Status", "?"),
             "display_name": f"{client_name} #{f.get('Video Number', '?')}",
+            "deadline": f.get("Deadline"),
+            "last_modified": f.get("Last Modified (Editing Status)"),
+            "thumbnail_status": f.get("Thumbnail Status", ""),
+            "thumbnail_deadline": f.get("Thumbnail Deadline"),
         }
 
         if editor_key not in pipeline:
@@ -181,7 +194,11 @@ def _match_video_to_messages(video, messages):
     if client != "?" and vid_num != "?":
         patterns.append(re.compile(rf"\b{re.escape(client)}\s*{re.escape(vid_num)}\b", re.IGNORECASE))
         if len(vid_num) > 1:
-            patterns.append(re.compile(rf"\b{re.escape(vid_num)}\b", re.IGNORECASE))
+            # Require context prefix to avoid matching times/quantities
+            # e.g. "video 37", "#37", "vid37" but not "10am" or "sent 10"
+            patterns.append(re.compile(
+                rf"(?:video\s*|vid\s*|#){re.escape(vid_num)}\b", re.IGNORECASE
+            ))
 
     combined_name = f"{client}{vid_num}".lower()
 
@@ -276,7 +293,7 @@ def _classify_priority(video, matched_messages):
         return "HIGH"
     if status == "59 - Editing Revisions":
         return "HIGH"
-    if status == "60 - Submitted for QC":
+    if status in QC_STATUSES:
         return "HIGH"
 
     # MEDIUM: actively being worked on
@@ -345,6 +362,92 @@ def _extract_context(matched_messages):
     return context_lines
 
 
+def _detect_blockers(matched_messages):
+    """Check matched messages for blocker keywords.
+
+    Scans editor (non-bot, non-Simon) messages for BLOCKER_KEYWORDS.
+    Returns list of {"keyword": str, "text": str, "user": str}
+    """
+    blockers = []
+    for msg in matched_messages:
+        user = msg.get("user", "")
+        user_id = msg.get("user_id", "")
+        # Only check editor messages (skip bots and Simon)
+        if user.lower() == "airtable" or msg.get("username", "") == "airtable2":
+            continue
+        if user_id in OPS_MANAGER_IDS:
+            continue
+        text = msg.get("text", "")
+        if not text or len(text) < 5:
+            continue
+        text_lower = text.lower()
+        for kw in BLOCKER_KEYWORDS:
+            if kw in text_lower:
+                blockers.append({
+                    "keyword": kw,
+                    "text": text[:100],
+                    "user": user,
+                })
+                break  # one keyword per message
+    return blockers
+
+
+def _status_age(last_modified_str):
+    """Days since status last changed. Returns 'Xd' or '' if unknown."""
+    if not last_modified_str:
+        return ""
+    try:
+        dt = datetime.fromisoformat(last_modified_str.replace("Z", "+00:00"))
+        days = (datetime.now(dt.tzinfo) - dt).days
+        return f"{days}d"
+    except (ValueError, TypeError):
+        return ""
+
+
+def _parse_deadline(deadline_str):
+    """Parse Airtable deadline string to date. Returns None if invalid/empty."""
+    if not deadline_str:
+        return None
+    try:
+        return datetime.strptime(deadline_str[:10], "%Y-%m-%d").date()
+    except (ValueError, TypeError):
+        return None
+
+
+def _days_until_deadline(deadline_str):
+    """Return days until deadline (negative = overdue). None if no deadline."""
+    d = _parse_deadline(deadline_str)
+    if d is None:
+        return None
+    return (d - date.today()).days
+
+
+def _deadline_display(deadline_str, status=""):
+    """Format deadline for compact table display.
+
+    Appends '⚠ refresh' when deadline is past but status indicates active work
+    (59/60/75) — these deadlines are likely stale since Simon updates weekly.
+    """
+    days = _days_until_deadline(deadline_str)
+    if days is None:
+        return ""
+    # Statuses where an overdue deadline is normal (active revision/QC/client cycle)
+    active_cycle_statuses = {"59 - Editing Revisions", "75 - Sent to Client For Review"}
+    active_cycle_statuses.update(QC_STATUSES)
+    if days < 0:
+        label = f"{abs(days)}d overdue"
+        if status in active_cycle_statuses:
+            label += " (check deadline)" if abs(days) >= 7 else " (stale?)"
+        return label
+    elif days == 0:
+        return "due today"
+    elif days == 1:
+        return "due tomorrow"
+    else:
+        d = _parse_deadline(deadline_str)
+        return d.strftime("%b %d")
+
+
 def _generate_bottom_line(editor_name, tasks, airtable_videos, has_slack_activity):
     """Generate a one-line summary for the editor."""
     if not has_slack_activity and not airtable_videos:
@@ -385,6 +488,64 @@ def analyze_editor(editor_key, slack_messages, airtable_videos):
     ]
     has_human_slack = bool(human_messages)
 
+    # Calculate hours since last human message (for escalation timing)
+    hours_since_last = None
+    last_message_text = None
+    if human_messages:
+        try:
+            latest_msg = max(human_messages, key=lambda m: float(m.get("timestamp", 0)))
+            last_ts = float(latest_msg.get("timestamp", 0))
+            hours_since_last = (datetime.now() - datetime.fromtimestamp(last_ts)).total_seconds() / 3600
+            hours_since_last = round(hours_since_last, 1)
+            raw = latest_msg.get("text", "").strip()
+            raw = re.sub(r"<@[A-Z0-9]+>", "@user", raw)
+            raw = re.sub(r"\n+", " | ", raw)
+            last_message_text = raw[:120] if raw else None
+        except (ValueError, TypeError):
+            pass
+
+    # Detect ops manager unanswered questions (Simon + Jonathan)
+    simon_unanswered = None
+    simon_msgs = [
+        m for m in slack_messages
+        if m.get("user_id") in OPS_MANAGER_IDS
+        and len(m.get("text", "")) > 5
+        and "Send your *check in*" not in m.get("text", "")
+        and "archived the channel" not in m.get("text", "")
+        and "joined the channel" not in m.get("text", "")
+        and m.get("subtype", "") not in ("channel_archive", "channel_join", "channel_leave")
+    ]
+    if simon_msgs:
+        # Find the latest ops manager message
+        latest_simon = max(simon_msgs, key=lambda m: float(m.get("timestamp", 0)))
+        simon_ts = float(latest_simon.get("timestamp", 0))
+        # Check if any non-ops, non-bot message came after (including thread replies)
+        def _is_valid_reply(m):
+            return (
+                float(m.get("timestamp", 0)) > simon_ts
+                and m.get("user_id") not in OPS_MANAGER_IDS
+                and m.get("user", "").lower() != "airtable"
+                and m.get("username", "") != "airtable2"
+                and "Send your *check in*" not in m.get("text", "")
+            )
+
+        has_reply = any(_is_valid_reply(m) for m in slack_messages)
+        # Also check thread replies (editor might reply in a thread)
+        if not has_reply:
+            for m in slack_messages:
+                for reply in m.get("thread_replies", []):
+                    if _is_valid_reply(reply):
+                        has_reply = True
+                        break
+                if has_reply:
+                    break
+        if not has_reply:
+            hours_ago = (datetime.now() - datetime.fromtimestamp(simon_ts)).total_seconds() / 3600
+            simon_unanswered = {
+                "text": latest_simon.get("text", "")[:60],
+                "hours_ago": round(hours_ago, 1),
+            }
+
     tasks = []
 
     # Build tasks from Airtable videos
@@ -392,15 +553,21 @@ def analyze_editor(editor_key, slack_messages, airtable_videos):
         matched = _match_video_to_messages(video, slack_messages)
         priority = _classify_priority(video, matched)
         context = _extract_context(matched)
+        blockers = _detect_blockers(matched)
 
         tasks.append({
             "display_name": video["display_name"],
             "client": video["client"],
             "video_number": video["video_number"],
             "airtable_status": video["status"],
+            "deadline": video.get("deadline"),
+            "last_modified": video.get("last_modified"),
+            "thumbnail_status": video.get("thumbnail_status", ""),
+            "thumbnail_deadline": video.get("thumbnail_deadline"),
             "priority": priority,
             "context": context,
             "matched_message_count": len(matched),
+            "blockers": blockers,
         })
 
     # Check for unmatched Slack activity (tasks not in Airtable)
@@ -447,7 +614,129 @@ def analyze_editor(editor_key, slack_messages, airtable_videos):
         "has_activity": has_human_slack,
         "slack_message_count": len(slack_messages),
         "unmatched_messages": len(unmatched_important),
+        "hours_since_last_message": hours_since_last,
+        "last_message_text": last_message_text,
+        "simon_unanswered": simon_unanswered,
     }
+
+
+# ============================================================================
+# ACTIVE ALERTS DETECTION
+# ============================================================================
+
+def _detect_active_alerts(all_editors, all_tasks):
+    """Detect cross-cutting alert patterns across editors and videos.
+
+    Returns list of {"alert": str, "detail": str} dicts.
+    """
+    alerts = []
+
+    # --- Revision loops ---
+    # Count bot messages "[Airtable] Revisions requested" and
+    # "[Airtable] Submitted for review" in context. A cycle = one of each.
+    for task in all_tasks:
+        context_text = " ".join(task.get("context", []))
+        rev_count = context_text.count("[Airtable] Revisions requested")
+        qc_count = context_text.count("[Airtable] Submitted for review")
+        cycles = min(rev_count, qc_count)
+        if cycles >= REVISION_LOOP_THRESHOLD:
+            alerts.append({
+                "alert": "Revision loop",
+                "detail": f"{task['display_name']} ({task['editor']}) — "
+                          f"{cycles} revision rounds in scan window",
+            })
+
+    # --- Heavy editor load ---
+    for ed in all_editors:
+        video_count = len(ed["airtable_videos"])
+        if video_count >= HEAVY_LOAD_THRESHOLD:
+            overdue = sum(
+                1 for v in ed["airtable_videos"]
+                if _days_until_deadline(v.get("deadline")) is not None
+                and _days_until_deadline(v.get("deadline")) < 0
+            )
+            detail = f"{ed['editor_display']} — {video_count} videos"
+            if overdue:
+                detail += f", {overdue} overdue"
+            alerts.append({"alert": "Heavy load", "detail": detail})
+
+    # --- Simon unanswered ---
+    for ed in all_editors:
+        su = ed.get("simon_unanswered")
+        if su:
+            preview = su["text"].replace("\n", " ").strip()
+            alerts.append({
+                "alert": "Simon unanswered",
+                "detail": f"{ed['editor_display']} — \"{preview}\" "
+                          f"({su['hours_ago']:.0f}h ago, no reply)",
+            })
+
+    # --- Silent + approaching deadline ---
+    for ed in all_editors:
+        if ed["has_activity"]:
+            continue
+        approaching = [
+            v for v in ed["airtable_videos"]
+            if _days_until_deadline(v.get("deadline")) is not None
+            and 0 <= _days_until_deadline(v.get("deadline")) <= 2
+        ]
+        if approaching:
+            names = ", ".join(v["display_name"] for v in approaching[:3])
+            alerts.append({
+                "alert": "Silent + deadline",
+                "detail": f"{ed['editor_display']} not responding, "
+                          f"due soon: {names}",
+            })
+
+    # --- Stale QC (status 60, Last Modified 8h+ ago) ---
+    for task in all_tasks:
+        if task["airtable_status"] not in QC_STATUSES:
+            continue
+        lm = task.get("last_modified")
+        if not lm:
+            continue
+        try:
+            modified_dt = datetime.fromisoformat(lm.replace("Z", "+00:00"))
+            hours_ago = (datetime.now(modified_dt.tzinfo) - modified_dt).total_seconds() / 3600
+            if hours_ago >= STALE_QC_HOURS:
+                alerts.append({
+                    "alert": "Stale QC",
+                    "detail": f"{task['display_name']} ({task['editor']}) "
+                              f"submitted {int(hours_ago)}h ago",
+                })
+        except (ValueError, TypeError):
+            pass
+
+    # --- Stale approval (status 80, Last Modified 5+ days) ---
+    for task in all_tasks:
+        if task["airtable_status"] != "80 - Approved By Client":
+            continue
+        lm = task.get("last_modified")
+        if not lm:
+            continue
+        try:
+            modified_dt = datetime.fromisoformat(lm.replace("Z", "+00:00"))
+            days_ago = (datetime.now(modified_dt.tzinfo) - modified_dt).days
+            if days_ago >= STALE_APPROVAL_DAYS:
+                alerts.append({
+                    "alert": "Stale approval",
+                    "detail": f"{task['display_name']} ({task['editor']}) "
+                              f"approved {days_ago}d ago, not yet scheduled",
+                })
+        except (ValueError, TypeError):
+            pass
+
+    # --- Blocked videos ---
+    for task in all_tasks:
+        if task.get("blockers"):
+            b = task["blockers"][0]  # First blocker per video
+            alerts.append({
+                "alert": "Blocked",
+                "detail": f"{task['display_name']} ({task['editor']}) "
+                          f"-- \"{b['text'][:60]}\"",
+            })
+
+    return alerts
 
 
 # ============================================================================
@@ -557,119 +846,384 @@ def _get_latest_context_line(task):
     return ""
 
 
-def format_action_report(all_editors, hours):
-    """Format report grouped by action needed (PM-optimized view)."""
-    lines = []
-    lines.append("## PM Action Report ({}h scan)".format(hours))
-    lines.append("Generated: {}".format(datetime.now().strftime("%Y-%m-%d %H:%M")))
-    lines.append("")
+# ---------------------------------------------------------------------------
+# Bench & Thumbnail analysis
+# ---------------------------------------------------------------------------
 
-    # Collect ALL tasks across all editors with editor info attached
+def detect_bench_editors(pipeline, all_editors):
+    """Identify editors with 0 active videos who are available for assignment.
+
+    Uses EDITOR_CHANNELS as the canonical editor list. Any editor in that dict
+    with 0 videos in the pipeline is on the bench.
+
+    Returns: [{"editor": "Alaa", "note": "Last active 2d ago"}, ...]
+    """
+    active_editor_keys = set(pipeline.keys())
+    # Build lookup for analyzed editor data
+    ed_lookup = {ed["editor_key"]: ed for ed in all_editors}
+
+    bench = []
+    for editor_key in EDITOR_CHANNELS:
+        if editor_key in active_editor_keys:
+            continue
+
+        ed_data = ed_lookup.get(editor_key)
+        note = ""
+        if ed_data:
+            h = ed_data.get("hours_since_last_message")
+            last_msg = ed_data.get("last_message_text", "")
+            if h is not None:
+                if h < 24:
+                    time_part = "{}h ago".format(int(h))
+                else:
+                    time_part = "{}d ago".format(int(h / 24))
+                if last_msg:
+                    note = '"{}" ({})'.format(last_msg[:80], time_part)
+                else:
+                    note = "Last active {}".format(time_part)
+            elif not ed_data.get("has_activity"):
+                note = "No recent activity"
+        else:
+            note = "Channel not scanned"
+
+        bench.append({"editor": editor_key.title(), "note": note})
+
+    bench.sort(key=lambda e: e["editor"])
+    return bench
+
+
+def analyze_thumbnail_pipeline(all_tasks):
+    """Categorize active videos by thumbnail status.
+
+    Returns dict: new, in_revision, pending_feedback, total_queue, ram_slack_context
+    """
+    new = []
+    in_revision = []
+    pending_feedback = []
+
+    in_progress = []
+
+    for task in all_tasks:
+        ts = (task.get("thumbnail_status") or "").strip()
+        status = task.get("airtable_status", "")
+        # Skip approved/done and raw footage (no thumbnail needed yet)
+        if status in ("80 - Approved By Client", "100 - Scheduled - DONE",
+                       "40 - Client Sent Raw Footage"):
+            continue
+        if ts == THUMBNAIL_NEEDS_WORK:
+            new.append(task)
+        elif ts == THUMBNAIL_IN_REVISION:
+            in_revision.append(task)
+        elif ts == THUMBNAIL_IN_PROGRESS:
+            in_progress.append(task)
+
+    return {
+        "new": sorted(new, key=lambda t: t["display_name"]),
+        "in_progress": sorted(in_progress, key=lambda t: t["display_name"]),
+        "in_revision": sorted(in_revision, key=lambda t: t["display_name"]),
+        "total_queue": len(new) + len(in_revision) + len(in_progress),
+    }
+
+
+def _get_ram_slack_context(hours):
+    """Try to read Ram's thumbnail channel for recent activity context.
+
+    Returns list of summary lines, or empty list if channel not found.
+    """
+    try:
+        messages = read_slack_channel(RAM_CHANNEL_ID, limit=100, since_hours=hours,
+                                       include_threads=False)
+        if not messages:
+            return ["No messages in thumbnail channel ({}h)".format(hours)]
+
+        # Filter to human messages only
+        human_msgs = [
+            m for m in messages
+            if "Send your *check in*" not in m.get("text", "")
+            and m.get("user", "").lower() != "airtable"
+            and m.get("username", "") != "airtable2"
+            and len(m.get("text", "")) > 5
+        ]
+
+        context = []
+        context.append("{} messages in thumbnail channel ({}h)".format(len(human_msgs), hours))
+
+        if human_msgs:
+            recent = sorted(human_msgs,
+                            key=lambda m: float(m.get("timestamp", 0)),
+                            reverse=True)[:3]
+            for msg in recent:
+                user = msg.get("user", "Unknown")
+                text = msg.get("text", "").strip()[:120]
+                text = re.sub(r"<@[A-Z0-9]+>", "@user", text)
+                text = re.sub(r"\n+", " | ", text)
+                ts = float(msg.get("timestamp", 0))
+                h_ago = (datetime.now() - datetime.fromtimestamp(ts)).total_seconds() / 3600
+                if h_ago < 24:
+                    time_str = "{}h ago".format(int(h_ago))
+                else:
+                    time_str = "{}d ago".format(int(h_ago / 24))
+                context.append("[{}] {}: {}".format(time_str, user, text))
+
+        return context
+    except Exception as e:
+        print("  Warning: Could not read Ram's channel: {}".format(e), file=sys.stderr)
+        return []
+
+
+def _build_tasks_and_silent(all_editors):
+    """Extract flat task list and silent editor list from analyzed editor data."""
     all_tasks = []
     silent_editors = []
-
     for ed in all_editors:
         editor_name = ed["editor_display"]
         for task in ed["tasks"]:
             task_copy = dict(task)
             task_copy["editor"] = editor_name
             all_tasks.append(task_copy)
-
-        # Detect silent editors
         if not ed["has_activity"] and ed["airtable_videos"]:
             silent_editors.append({
                 "editor": editor_name,
                 "active_videos": len(ed["airtable_videos"]),
+                "hours_since_last": ed.get("hours_since_last_message"),
             })
+    return all_tasks, silent_editors
+
+
+def _format_bench_section(bench_editors):
+    """Format the BENCH section lines."""
+    if not bench_editors:
+        return []
+    lines = []
+    lines.append("### BENCH -- Available for Assignments ({})".format(len(bench_editors)))
+    lines.append("| Editor | Notes |")
+    lines.append("|--------|-------|")
+    for e in bench_editors:
+        lines.append("| {} | {} |".format(e["editor"], e["note"]))
+    lines.append("")
+    return lines
+
+
+def _format_ram_section(thumb_data):
+    """Format the RAM thumbnail pipeline section lines."""
+    if not thumb_data:
+        return []
+    if not (thumb_data["new"] or thumb_data["in_progress"] or thumb_data["in_revision"]):
+        return []
+    lines = []
+    queue = thumb_data["total_queue"]
+    lines.append("### RAM -- Thumbnail Pipeline ({} in queue)".format(queue))
+
+    if thumb_data["new"]:
+        lines.append("")
+        lines.append("**Needs Thumbnail ({}):**".format(len(thumb_data["new"])))
+        lines.append("| # | Video | Editor | Thumb Deadline |")
+        lines.append("|---|-------|--------|----------------|")
+        for i, t in enumerate(thumb_data["new"], 1):
+            td = t.get("thumbnail_deadline") or ""
+            if td:
+                td_date = _parse_deadline(td)
+                if td_date:
+                    days = (td_date - date.today()).days
+                    if days < 0:
+                        td = "{}d overdue".format(abs(days))
+                    elif days == 0:
+                        td = "today"
+                    else:
+                        td = td_date.strftime("%b %d")
+            lines.append("| {} | {} | {} | {} |".format(
+                i, t["display_name"], t.get("editor", ""), td))
+
+    if thumb_data["in_progress"]:
+        lines.append("")
+        lines.append("**Ram Working On ({}):**".format(len(thumb_data["in_progress"])))
+        for t in thumb_data["in_progress"]:
+            td = t.get("thumbnail_deadline") or ""
+            if td:
+                td_date = _parse_deadline(td)
+                if td_date:
+                    days = (td_date - date.today()).days
+                    if days < 0:
+                        td = " | {}d overdue".format(abs(days))
+                    elif days == 0:
+                        td = " | due today"
+                    else:
+                        td = " | due {}".format(td_date.strftime("%b %d"))
+            lines.append("- {}{}".format(t["display_name"], td))
+
+    if thumb_data["in_revision"]:
+        lines.append("")
+        lines.append("**Sent Back to Ram ({}):**".format(len(thumb_data["in_revision"])))
+        for t in thumb_data["in_revision"]:
+            lines.append("- {}".format(t["display_name"]))
+
+    if thumb_data.get("ram_slack_context"):
+        lines.append("")
+        lines.append("**Recent activity:**")
+        for ctx in thumb_data["ram_slack_context"][:4]:
+            lines.append("- {}".format(ctx))
+
+    lines.append("")
+    return lines
+
+
+def format_action_report(all_editors, hours, all_tasks=None, silent_editors=None,
+                         bench_editors=None, thumb_data=None):
+    """Format report grouped by action needed (PM-optimized view)."""
+    # Build tasks if not provided (backward compat)
+    if all_tasks is None or silent_editors is None:
+        all_tasks, silent_editors = _build_tasks_and_silent(all_editors)
+
+    lines = []
+    lines.append("## PM Action Report ({}h scan)".format(hours))
+    lines.append("Generated: {}".format(datetime.now().strftime("%Y-%m-%d %H:%M")))
+    lines.append("")
 
     # Bucket tasks by status
-    qc_tasks = [t for t in all_tasks if t["airtable_status"] == "60 - Submitted for QC"]
+    qc_tasks = [t for t in all_tasks if t["airtable_status"] in QC_STATUSES]
     schedule_tasks = [t for t in all_tasks if t["airtable_status"] == "80 - Approved By Client"]
     revision_tasks = [t for t in all_tasks if t["airtable_status"] == "59 - Editing Revisions"]
     client_tasks = [t for t in all_tasks if t["airtable_status"] == "75 - Sent to Client For Review"]
     in_progress = [t for t in all_tasks if t["airtable_status"] in (
         "41 - Sent to Editor", "50 - Editor Confirmed", "40 - Client Sent Raw Footage")]
 
-    # Sort all buckets alphabetically by video name
-    for bucket in (qc_tasks, schedule_tasks, revision_tasks, client_tasks, in_progress):
+    # DUE TODAY: videos with today/tomorrow deadline, excluding post-delivery
+    due_today = [
+        t for t in all_tasks
+        if _days_until_deadline(t.get("deadline")) in (0, 1)
+        and t["airtable_status"] not in POST_DEADLINE_STATUSES
+    ]
+
+    for bucket in (qc_tasks, schedule_tasks, revision_tasks, client_tasks, in_progress, due_today):
         bucket.sort(key=lambda t: t["display_name"])
 
-    # --- DO FIRST ---
+    alerts = _detect_active_alerts(all_editors, all_tasks)
+
+    # =====================================================================
+    # CHECKLIST TOP — checkbox action items
+    # =====================================================================
+
+    # --- Deliver now (QC) ---
     if qc_tasks:
-        lines.append("### DO FIRST — QC Required ({})".format(len(qc_tasks)))
-        lines.append("| # | Video | Editor | Context |")
-        lines.append("|---|-------|--------|---------|")
-        for i, t in enumerate(qc_tasks, 1):
-            ctx = _get_latest_context_line(t)
-            lines.append("| {} | {} | {} | {} |".format(
-                i, t["display_name"], t["editor"], ctx
-            ))
+        lines.append("**Deliver now** (QC these videos):")
+        for t in qc_tasks:
+            dl = _deadline_display(t.get("deadline"), t["airtable_status"])
+            dl_part = " | {}".format(dl) if dl else ""
+            lines.append("- [ ] {} -- {}{}".format(t["display_name"], t["editor"], dl_part))
         lines.append("")
 
-    # --- SCHEDULE NOW ---
+    # --- Schedule immediately ---
     if schedule_tasks:
-        lines.append("### SCHEDULE NOW — Approved by Client ({})".format(len(schedule_tasks)))
-        lines.append("| # | Video | Editor |")
-        lines.append("|---|-------|--------|")
-        for i, t in enumerate(schedule_tasks, 1):
-            lines.append("| {} | {} | {} |".format(
-                i, t["display_name"], t["editor"]
-            ))
+        lines.append("**Schedule immediately** (client approved):")
+        for t in schedule_tasks:
+            waiting = ""
+            lm = t.get("last_modified")
+            if lm:
+                try:
+                    modified_dt = datetime.fromisoformat(lm.replace("Z", "+00:00"))
+                    days_ago = (datetime.now(modified_dt.tzinfo) - modified_dt).days
+                    waiting = " | waiting {}d".format(days_ago) if days_ago > 0 else " | approved today"
+                except (ValueError, TypeError):
+                    pass
+            lines.append("- [ ] {} -- {}{}".format(t["display_name"], t["editor"], waiting))
         lines.append("")
 
-    # --- FOLLOW UP ---
+    # --- Due today ---
+    if due_today:
+        lines.append("**Due today/tomorrow ({}):**".format(len(due_today)))
+        for t in due_today:
+            short_status = t["airtable_status"].split(" - ", 1)[-1] if " - " in t["airtable_status"] else t["airtable_status"]
+            lines.append("- [ ] {} -- {} ({})".format(t["display_name"], t["editor"], short_status))
+        lines.append("")
+
+    # --- Follow up for approval (with client) ---
+    if client_tasks:
+        lines.append("**Follow up for approval** (with client):")
+        for t in client_tasks:
+            lines.append("- [ ] {} -- {}".format(t["display_name"], t["client"]))
+        lines.append("")
+
+    # --- Outreach (silent editors) ---
+    if silent_editors:
+        silent_editors.sort(key=lambda e: -e["active_videos"])
+        lines.append("**Outreach** (silent editors):")
+        for e in silent_editors:
+            h = e.get("hours_since_last")
+            if h is not None and h >= EDITOR_WHATSAPP_HOURS:
+                action = "WhatsApp"
+            elif h is not None and h >= EDITOR_NUDGE_HOURS:
+                action = "Slack nudge"
+            else:
+                action = "check in"
+            if h is not None:
+                time_str = "{}h silent".format(int(h)) if h < 24 else "{}d silent".format(int(h / 24))
+            else:
+                time_str = "unknown"
+            lines.append("- [ ] {} -- {} videos, {} ({})".format(
+                e["editor"], e["active_videos"], time_str, action))
+        lines.append("")
+
+    # --- Unblock (blocked editors) ---
+    blocked_tasks = [t for t in all_tasks if t.get("blockers")]
+    if blocked_tasks:
+        lines.append("**Unblock** (editors waiting on something):")
+        for t in blocked_tasks:
+            blocker_text = t["blockers"][0]["text"][:80]
+            lines.append("- [ ] {} -- {}: \"{}\"".format(
+                t["display_name"], t["editor"], blocker_text))
+        lines.append("")
+
+    # =====================================================================
+    # DETAIL TABLES — structured data below the checklist
+    # =====================================================================
+
+    # --- ACTIVE ALERTS ---
+    if alerts:
+        lines.append("### ACTIVE ALERTS")
+        lines.append("| Alert | Detail |")
+        lines.append("|-------|--------|")
+        for a in alerts:
+            lines.append("| **{}** | {} |".format(a["alert"], a["detail"]))
+        lines.append("")
+
+    # --- FOLLOW UP (revisions) ---
     if revision_tasks:
-        lines.append("### FOLLOW UP — Editor Revisions ({})".format(len(revision_tasks)))
-        lines.append("Videos in revision (status 59) where the editor needs to act.")
-        lines.append("| # | Video | Editor | Last Activity |")
-        lines.append("|---|-------|--------|---------------|")
+        lines.append("### FOLLOW UP -- Editor Revisions ({})".format(len(revision_tasks)))
+        lines.append("| # | Video | Editor | Deadline | Age | Last Activity |")
+        lines.append("|---|-------|--------|----------|-----|---------------|")
         for i, t in enumerate(revision_tasks, 1):
             ctx = _get_latest_context_line(t)
-            lines.append("| {} | {} | {} | {} |".format(
-                i, t["display_name"], t["editor"], ctx
-            ))
-        lines.append("")
-
-    # --- MONITOR ---
-    if client_tasks:
-        lines.append("### MONITOR — Client Blockers ({})".format(len(client_tasks)))
-        lines.append("Waiting on client response. No urgent PM action.")
-        lines.append("| # | Video | Client | Editor |")
-        lines.append("|---|-------|--------|--------|")
-        for i, t in enumerate(client_tasks, 1):
-            lines.append("| {} | {} | {} | {} |".format(
-                i, t["display_name"], t["client"], t["editor"]
+            dl = _deadline_display(t.get("deadline"), t["airtable_status"])
+            age = _status_age(t.get("last_modified"))
+            lines.append("| {} | {} | {} | {} | {} | {} |".format(
+                i, t["display_name"], t["editor"], dl, age, ctx
             ))
         lines.append("")
 
     # --- IN PROGRESS ---
     if in_progress:
-        lines.append("### IN PROGRESS — With Editors ({})".format(len(in_progress)))
-        lines.append("Videos assigned to editors, not yet submitted for QC.")
-        lines.append("| # | Video | Editor | Status |")
-        lines.append("|---|-------|--------|--------|")
+        lines.append("### IN PROGRESS -- With Editors ({})".format(len(in_progress)))
+        lines.append("| # | Video | Editor | Status | Deadline | Age |")
+        lines.append("|---|-------|--------|--------|----------|-----|")
         for i, t in enumerate(in_progress, 1):
-            # Shorten status for compact display
             short_status = t["airtable_status"].split(" - ", 1)[-1] if " - " in t["airtable_status"] else t["airtable_status"]
-            lines.append("| {} | {} | {} | {} |".format(
-                i, t["display_name"], t["editor"], short_status
+            dl = _deadline_display(t.get("deadline"), t["airtable_status"])
+            age = _status_age(t.get("last_modified"))
+            lines.append("| {} | {} | {} | {} | {} | {} |".format(
+                i, t["display_name"], t["editor"], short_status, dl, age
             ))
         lines.append("")
 
-    # --- SILENT EDITORS ---
-    if silent_editors:
-        silent_editors.sort(key=lambda e: -e["active_videos"])
-        lines.append("### SILENT EDITORS — No Activity {}h".format(hours))
-        lines.append("| Editor | Active Videos |")
-        lines.append("|--------|--------------|")
-        for e in silent_editors:
-            lines.append("| {} | {} |".format(e["editor"], e["active_videos"]))
-        lines.append("")
+    # --- BENCH ---
+    lines.extend(_format_bench_section(bench_editors))
+
+    # --- RAM ---
+    lines.extend(_format_ram_section(thumb_data))
 
     # Totals
     total = len(all_tasks)
     lines.append("---")
-    lines.append(f"**{total} videos tracked across {len(all_editors)} editors.**")
+    lines.append("**{} videos tracked across {} editors.**".format(total, len(all_editors)))
     lines.append("")
 
     return "\n".join(lines)
@@ -684,7 +1238,7 @@ def _task_description(task):
         return "Approved by Client"
     elif status == "75 - Sent to Client For Review":
         return "With Client for Review"
-    elif status == "60 - Submitted for QC":
+    elif status in QC_STATUSES:
         return "Submitted for QC"
     elif status == "59 - Editing Revisions":
         if "urgent" in context_text or "asap" in context_text:
@@ -769,17 +1323,45 @@ Examples:
         # Phase 3: Output
         print(f"\nPhase 3: Generating report...", file=sys.stderr)
 
+        # Build shared task list and silent editors
+        all_tasks, silent_editors = _build_tasks_and_silent(all_editors)
+
+        # Bench + thumbnail analysis (skip in single-editor mode)
+        bench_editors = None
+        thumb_data = None
+        if not args.editor:
+            print("  Detecting bench editors...", file=sys.stderr)
+            bench_editors = detect_bench_editors(pipeline, all_editors)
+            print(f"  {len(bench_editors)} editors on bench", file=sys.stderr)
+
+            print("  Analyzing thumbnail pipeline...", file=sys.stderr)
+            thumb_data = analyze_thumbnail_pipeline(all_tasks)
+            print(f"  {thumb_data['total_queue']} thumbnails in queue", file=sys.stderr)
+
+            # Try to get Ram's Slack context (bonus, not required)
+            ram_context = _get_ram_slack_context(args.hours)
+            if ram_context:
+                thumb_data["ram_slack_context"] = ram_context
+                print(f"  {len(ram_context)} Ram Slack messages found", file=sys.stderr)
+
         if args.output == "json":
-            # Strip non-serializable stuff and output
             output = {
                 "generated": datetime.now().isoformat(),
                 "hours_scanned": args.hours,
                 "report_format": args.report_format,
                 "editors": all_editors,
             }
+            if bench_editors is not None:
+                output["bench_editors"] = bench_editors
+            if thumb_data is not None:
+                output["thumbnail_pipeline"] = thumb_data
             print(json.dumps(output, indent=2, default=str))
         elif args.report_format == "action":
-            report = format_action_report(all_editors, args.hours)
+            report = format_action_report(all_editors, args.hours,
+                                          all_tasks=all_tasks,
+                                          silent_editors=silent_editors,
+                                          bench_editors=bench_editors,
+                                          thumb_data=thumb_data)
             print(report)
         else:
             report = format_markdown_report(all_editors, args.hours)

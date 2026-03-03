@@ -1,6 +1,9 @@
 # PM Agent Skills Bible
 
 > This document defines the context, decision frameworks, and response patterns for an AI agent assisting with Project Management at KS Media. Use this to understand what responses are valuable vs. noise.
+>
+> **Full SOP reference:** `directives/ops_manager_sop.md` — 14-part canonical SOP for all PM operations.
+> When in doubt about workflows, status meanings, or edge cases, consult that document.
 
 ---
 
@@ -60,6 +63,67 @@ Understanding where a video is determines what action is needed.
 | **75 - Sent to Client** | Monitor for client response, follow up if needed | MEDIUM |
 | **50 - Editor Confirmed** | Check if deadline approaching, proactive check-in | LOW-MEDIUM |
 | **41 - Sent to Editor** | Wait, but follow up if no confirmation | LOW |
+
+### Status Reality (from operations experience)
+
+**Most-used statuses in practice:** 41, 59, 60, 75
+Many statuses (30, 39, 50) get skipped frequently. Videos often jump directly between key stages.
+
+**Status 60 has two Airtable variants:**
+- "60 - Submitted for QC"
+- "60 - Internal Review"
+Both mean the same thing: PM needs to review. Scripts must match BOTH.
+
+**Slack automation triggers:**
+- **41 - Sent to Editor** → editor gets pinged in their channel
+- **59 - Editing Revisions** → editor gets pinged that there are revisions
+- **60 - Submitted for QC** → PM gets pinged for review
+- **75 - Sent to Client For Review** → editor gets notified video is with client
+
+**Deadline clarification:**
+- Deadline = **V1 delivery** (first draft), NOT final delivery
+- Set 3 days from "Sent to Editor" assignment
+- A video past deadline but in revision cycles (59) is **normal**
+- A video past deadline still at 41/50 is **concerning**
+- Simon updates deadlines ~weekly; many are stale — context matters
+
+**Skipped statuses:**
+- Status 50 (Editor Confirmed) often skipped — editors go directly from 41 to 60
+- Status 39 (Client Making Fixes) rarely used
+- "Client Sent Revisions" — always bypassed in current practice. Simon sets directly to 59 (Editing Revisions) for both QC revisions and client revisions
+- "Approved by Agency" — skipped. Simon goes directly from 60 (QC) to 75 (Sent to Client). This status is not tracked by any agent scripts and should not appear in normal operations
+
+**Common flow in practice:**
+41 → 60 → 59 → 60 → 75 → 59 → 60 → 75 → 80 → 100
+Videos can bounce between QC (60) and revisions (59) multiple times before going to client (75), and between client review (75) and revisions (59) after client feedback.
+
+### QC Workflow (Frame.io)
+
+**Simon (the PM) performs all QC.** The `ops_manager_sop.md` refers to a separate "Quality Checker" role — this is outdated. All status 60 videos are reviewed by Simon directly in Frame.io.
+
+1. Video arrives at status 60 (Submitted for QC / Internal Review)
+2. Simon reviews in Frame.io — leaves timestamped revision comments
+3. If revisions needed: set to 59 (Editing Revisions), editor gets auto-pinged
+4. Editor implements revisions, resubmits → back to 60
+5. PM cross-checks using Frame.io version comparison (before/after)
+6. If approved: set to 75 (Sent to Client), send Frame.io link + Drive folder to client
+7. Client feedback loop: 75 → 59 → 60 → 75 until approved → 80
+
+**Note:** Frame.io API integration is NOT a priority currently. Video review is manual.
+
+### YouTube Scheduling (Quick Reference)
+
+Full 13-step process in `directives/ops_manager_sop.md` Part 9.
+
+**Critical steps:**
+1. Download video file (Frame.io) + thumbnail (Ram's Slack channel)
+2. Copy title from script — check for template variables (e.g., "X minutes")
+3. Use client's description template from their Drive folder
+4. Generate tags via rapidtags.io — filter irrelevant ones
+5. Schedule **11am EST weekdays**, same day each week for 4/mo clients
+6. DOUBLE-CHECK: right file, right thumbnail, matching title, links start with https://
+7. Set to "Scheduled" (never "Public") — mark as **100 - Scheduled - DONE** in Airtable
+8. Message client: "Hey @name, new video is scheduled for [Day] 11am EST: [link]"
 
 ---
 
@@ -249,22 +313,22 @@ NOISE: "Some editors need follow-up."
 | Tyler | Lin |
 | Liam | Chris |
 
-### Editor Pricing
-| Editor | Rate | Notes |
-|--------|------|-------|
-| Amna | $150/video | |
-| Ananda | $230/video | $185 ArborXR interview, $50-100 shorts |
-| Chris | $200/video | |
-| Exander | $200/video | $280 if >18min |
-| Megh | $180/video | |
-| Rafael | $100/Adam podcast, $80/Magentrix | |
-| Sakib | $200/video | |
-| Suhaib | $20/short | |
-| Syed N | $200/video | |
-| Ram | $20/thumbnail | +$10/variation |
-| Jov | $220/video | |
-| Sanjit | $200/video | |
-| Ruben | $150/video | |
+### Editor Pricing & Payment Details
+| Editor | Rate | Platform | Notes |
+|--------|------|----------|-------|
+| Amna | $150/video | Wise | Meezan Bank |
+| Ananda | $230/video | Wise | $185 ArborXR interview, $50 repurposed short, $100 new short ($80 if <2min) |
+| Chris | $200/video | Wise | Provides payment link |
+| Exander | $200/video | Payoneer | $280 if >18min, $150 Justin course, $50 Hiver podcast intro |
+| Megh | $180/video | Wise | Provides payment link |
+| Rafael | $100/Adam podcast, $80/Magentrix | Stripe | $20/music video |
+| Sakib | $200/video | Payoneer | |
+| Suhaib | $20/short | Wise | Skydo bank details |
+| Syed N | $200/video | Payoneer | |
+| Ram | $20/thumbnail | Payoneer | +$10/variation. Sends own payment info — no need to check in. |
+| Jov | $220/video | Wise | |
+| Sanjit | $200/video | Wise | |
+| Ruben | $150/video | PayPal | |
 
 ### Payment Days
 - **15th of each month**
@@ -318,25 +382,40 @@ Hey, we're paying you today. Please send over how much $ we owe you and a breakd
 
 ## 8. Response Templates for Agent
 
-### Daily Report Summary
+### Daily Report Summary (editor_task_report.py output)
 ```
-## Today's Priorities
+## PM Action Report (48h scan)
+Generated: YYYY-MM-DD HH:MM
 
-**DO FIRST - QC Required:**
-[List videos at status 60]
+### QC NEEDED NOW (N videos)
+| # | Video | Editor | Deadline | Notes |
 
-**SCHEDULE NOW - Approved:**
-[List videos at status 80]
+### SCHEDULE NOW — Client Approved (N videos)
+| # | Video | Editor | Waiting |
 
-**FOLLOW UP - Our Blockers:**
-[List with specific action for each]
+### DUE TODAY (N videos)
+| # | Video | Editor | Status |
 
-**MONITOR - Client Blockers:**
-[List - no urgent action, just tracking]
+### ACTIVE ALERTS
+| Alert | Detail |
+(Revision loops, heavy loads, stale QC, Simon unanswered, silent+deadline)
 
-**Heads Up - Due Soon:**
-[Tomorrow and this week deadlines]
+### FOLLOW UP — Editor Revisions (N)
+| # | Video | Editor | Deadline | Last Activity |
+
+### MONITOR — With Client (N)
+| # | Video | Client | Editor |
+
+### IN PROGRESS (N)
+| # | Video | Editor | Status | Deadline |
+
+### SILENT EDITORS — No Activity 48h
+| Editor | Videos | Last Seen | Action |
+(Action = Monitor / Slack nudge / WhatsApp NOW based on hours silent)
 ```
+
+Empty sections are omitted. Inactive clients filtered automatically.
+Thresholds: nudge at 10h, WhatsApp at 24h, heavy load at 6+ videos, revision loop at 3+ cycles, stale QC at 8h, stale approval at 5d.
 
 ### Video Status Analysis
 ```
