@@ -16,6 +16,7 @@ import json
 import re
 import argparse
 from datetime import datetime, timedelta, date
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -42,31 +43,67 @@ from constants import (
 # EDITOR CHANNEL REGISTRY
 # ============================================================================
 
-EDITOR_CHANNELS = {
-    "rafael":   {"id": "C070VSRPP6H", "name": "rafael-editing"},
-    "ananda":   {"id": "C071NUME7EC", "name": "ananda-editing"},
-    "amna":     {"id": "C079U4HF8GM", "name": "amna-editing"},
-    "megh":     {"id": "C08HNVDCGQ4", "name": "megh-editing"},
-    "suhaib":   {"id": "C08PCKQBTV5", "name": "suhaib-editing"},
-    "sakib":    {"id": "C09LQKUC7E0", "name": "sakib-editing"},
-    "syed n":   {"id": "C09S6EXECQP", "name": "syed-n-editing"},
-    "chris":    {"id": "C09S8G1LKT6", "name": "chris-editing"},
-    "jov":      {"id": "C0A0SFWPR3L", "name": "jov-editing"},
-    "sanjit":   {"id": "C0A13RZCLMT", "name": "sanjit-editing"},
-    "raj":      {"id": "C0A17EL29EZ", "name": "raj-editing"},
-    "lin":      {"id": "C0A1PCUQA7M", "name": "lin-editing"},
-    "ruben":    {"id": "C0A2PK6FWF3", "name": "ruben-editing"},
-    "sebastian":{"id": "C0A3CPG5Z3Q", "name": "seba-editing"},
-    "golden":   {"id": "C0A3D58KYT1", "name": "golden-2-editing"},
-    "kyrylo":   {"id": "C0A5H3PKA3E", "name": "kyrylo-editing"},
-    "rafiu":    {"id": "C0A5HJGF7EX", "name": "rafiu-editing"},
-    "shafen":   {"id": "C0A7UAZ22DN", "name": "shafen-editing"},
-    "ghayas":   {"id": "C0A7Z3F8K8T", "name": "ghayas-editing"},
-    "jaydi":    {"id": "C0ABFUHSWN9", "name": "jaydi-editing"},
-    "alaa":     {"id": "C0ACDK8D248", "name": "alaa-editing"},
-    "denis":    {"id": "C0ACR0N0R98", "name": "denis-editing"},
-    "anuj":     {"id": "C0A73RECBQS", "name": "anuj-editing"},
-}
+# Editor channels are discovered dynamically from Slack via discover_editor_channels().
+# This dict is populated once at script startup and then used as a module-level lookup.
+EDITOR_CHANNELS = {}
+
+
+def discover_editor_channels():
+    """Discover *-editing Slack channels and cross-reference with Airtable Team table.
+
+    Returns a dict keyed by editor name (lowercase, matching Airtable):
+        {"sakib": {"id": "C09LQKUC7E0", "name": "sakib-editing"}, ...}
+
+    Channel-to-editor matching:
+    1. Fetch all *-editing channels from Slack
+    2. Fetch Team table from Airtable to get canonical editor names
+    3. Match channels to editors by checking if the editor's first name appears
+       in the channel name (handles mismatches like seba-editing -> Sebastian)
+    4. Any channel that doesn't match a team member is keyed by channel name
+       (e.g. "golden-2-editing" -> "golden 2" if no Team match)
+    """
+    print("  Discovering editor channels from Slack...", file=sys.stderr)
+    channels = list_slack_channels(filter_pattern="-editing")
+    channels = [ch for ch in channels if not ch.get("is_archived", False)]
+    print(f"  Found {len(channels)} active *-editing channels", file=sys.stderr)
+
+    # Get canonical editor names from Airtable Team table
+    team_raw = read_airtable_records("Team", fields=["Name"])
+    team_names = [r["fields"].get("Name", "") for r in team_raw if r["fields"].get("Name")]
+
+    # Build a first-name lookup: {"sebastian": "Sebastian", "sakib": "Sakib", ...}
+    first_name_lookup = {}
+    for name in team_names:
+        first = name.strip().split()[0].lower()
+        first_name_lookup[first] = name
+
+    result = {}
+    for ch in channels:
+        ch_name = ch["name"]  # e.g. "seba-editing", "golden-2-editing"
+        stem = ch_name.replace("-editing", "")  # e.g. "seba", "golden-2"
+
+        # Try to match against Airtable team members
+        matched_name = None
+
+        # Direct match: stem == first name (covers most cases)
+        if stem in first_name_lookup:
+            matched_name = first_name_lookup[stem]
+        else:
+            # Partial match: check if any team first name starts with stem or vice versa
+            # Handles seba -> sebastian, syed-n -> syed n, etc.
+            stem_normalized = stem.replace("-", " ")
+            for first, full_name in first_name_lookup.items():
+                if first.startswith(stem_normalized.split()[0]) and len(stem_normalized.split()[0]) >= 3:
+                    matched_name = full_name
+                    break
+                if stem_normalized.startswith(first) and len(first) >= 3:
+                    matched_name = full_name
+                    break
+
+        editor_key = matched_name.lower() if matched_name else stem.replace("-", " ")
+        result[editor_key] = {"id": ch["id"], "name": ch_name}
+
+    return result
 
 URGENT_KEYWORDS = ["urgent", "asap", "critical", "extremely urgent", "immediately", "right away"]
 DONE_KEYWORDS = ["sent to the client for final review", "good job", "approved by client"]
@@ -853,8 +890,9 @@ def _get_latest_context_line(task):
 def detect_bench_editors(pipeline, all_editors):
     """Identify editors with 0 active videos who are available for assignment.
 
-    Uses EDITOR_CHANNELS as the canonical editor list. Any editor in that dict
-    with 0 videos in the pipeline is on the bench.
+    Uses EDITOR_CHANNELS (discovered dynamically from Slack) as the canonical
+    editor list. Any editor with a *-editing channel but 0 videos in the
+    pipeline is on the bench.
 
     Returns: [{"editor": "Alaa", "note": "Last active 2d ago"}, ...]
     """
@@ -1276,6 +1314,9 @@ Examples:
                         help="Run for a specific editor only (e.g., 'megh')")
     parser.add_argument("--output", choices=["markdown", "json"], default="markdown",
                         help="Output format (default: markdown)")
+    # NOTE: --editors-only is intentionally undocumented in Simon's CLAUDE.md.
+    # Idle editors appear in the BENCH section which is useful context for assignments.
+    # Parallel Slack fetching makes the speed gain negligible. Consider removing entirely.
     parser.add_argument("--editors-only", action="store_true", default=False,
                         help="Only show editors with active Airtable videos")
     parser.add_argument("--format", choices=["editor", "action"], default="action",
@@ -1285,6 +1326,11 @@ Examples:
     args = parser.parse_args()
 
     try:
+        # Phase 0: Discover editor channels from Slack + Airtable Team table
+        global EDITOR_CHANNELS
+        EDITOR_CHANNELS = discover_editor_channels()
+        print(f"  Matched {len(EDITOR_CHANNELS)} editor(s)", file=sys.stderr)
+
         # Phase 1: Fetch Airtable pipeline
         print("Phase 1: Fetching Airtable pipeline...", file=sys.stderr)
         pipeline = get_airtable_pipeline()
@@ -1302,21 +1348,32 @@ Examples:
             editors_to_process = EDITOR_CHANNELS
 
         # Phase 2: Read Slack channels and analyze
-        print(f"\nPhase 2: Reading {len(editors_to_process)} editor channel(s)...", file=sys.stderr)
+        print(f"\nPhase 2: Reading {len(editors_to_process)} editor channel(s) in parallel...", file=sys.stderr)
         all_editors = []
 
-        for editor_key, channel_info in sorted(editors_to_process.items()):
+        editors_list = [
+            (editor_key, channel_info)
+            for editor_key, channel_info in sorted(editors_to_process.items())
+            if not (args.editors_only and not pipeline.get(editor_key, []))
+        ]
+
+        def _fetch_editor(editor_key, channel_info):
+            return editor_key, get_slack_activity(channel_info["id"], args.hours)
+
+        slack_by_editor = {}
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = {
+                executor.submit(_fetch_editor, ek, ci): ek
+                for ek, ci in editors_list
+            }
+            for future in as_completed(futures):
+                editor_key, msgs = future.result()
+                slack_by_editor[editor_key] = msgs
+
+        for editor_key, channel_info in editors_list:
             airtable_videos = pipeline.get(editor_key, [])
-
-            # Skip editors with no active videos if --editors-only
-            if args.editors_only and not airtable_videos:
-                continue
-
-            print(f"  Reading #{channel_info['name']}...", file=sys.stderr)
-            slack_messages = get_slack_activity(channel_info["id"], args.hours)
-            print(f"    {len(slack_messages)} messages, {len(airtable_videos)} Airtable videos", file=sys.stderr)
-
-            # Analyze
+            slack_messages = slack_by_editor.get(editor_key, [])
+            print(f"  #{channel_info['name']}: {len(slack_messages)} messages, {len(airtable_videos)} Airtable videos", file=sys.stderr)
             editor_data = analyze_editor(editor_key, slack_messages, airtable_videos)
             all_editors.append(editor_data)
 

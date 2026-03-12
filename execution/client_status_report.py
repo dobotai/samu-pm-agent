@@ -15,6 +15,7 @@ import argparse
 import re
 from datetime import datetime, timedelta
 from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Shared helpers
 sys.path.insert(0, os.path.dirname(__file__))
@@ -99,6 +100,36 @@ ACKNOWLEDGMENT_PATTERNS = [
 # ---------------------------------------------------------------------------
 # Message classification helpers
 # ---------------------------------------------------------------------------
+
+# Slack auto-generated system messages — not real client messages.
+_SYSTEM_MESSAGE_PATTERNS = [
+    r"has joined the channel",
+    r"has left the channel",
+    r"was added to this channel by",
+    r"set the channel (topic|purpose|description)",
+    r"renamed the channel",
+    r"archived the channel",
+    r"pinned a message",
+    r"unpinned a message",
+    r"This content can't be displayed",
+]
+_SYSTEM_RE = re.compile("|".join(_SYSTEM_MESSAGE_PATTERNS), re.IGNORECASE)
+
+
+def _is_system_message(msg):
+    """Return True if the message is a Slack system/bot notification, not a real user message."""
+    # Slack system messages have subtype like "channel_join", "channel_leave", etc.
+    subtype = msg.get("subtype", "")
+    if subtype in ("channel_join", "channel_leave", "channel_topic",
+                    "channel_purpose", "channel_name", "pinned_item",
+                    "unpinned_item", "channel_archive", "bot_message"):
+        return True
+    # Some system messages lack subtype but have telltale text
+    text = msg.get("text", "")
+    if _SYSTEM_RE.search(text):
+        return True
+    return False
+
 
 def _is_delivery_message(text):
     """Detect team delivery notifications by content (links + delivery/schedule phrases)."""
@@ -474,6 +505,9 @@ def calculate_response_times(messages, team_slack_ids):
 
         if user_id == "unknown":
             continue
+        # Skip Slack system/bot notifications (joins, leaves, pins, etc.)
+        if _is_system_message(msg):
+            continue
 
         ts = float(msg.get("timestamp", "0"))
         msg_time = datetime.fromtimestamp(ts)
@@ -553,6 +587,8 @@ def get_last_contact(messages, team_slack_ids):
         text = msg.get("text", "")
         if user_id == "unknown" or not text or len(text) < 3:
             continue
+        if _is_system_message(msg):
+            continue
         if is_acknowledgment(text):
             continue
         ts = float(msg.get("timestamp", "0"))
@@ -597,18 +633,50 @@ def generate_client_report(hours=72, target_client=None):
     Phase 2: Slack scanning (sentiment, response times)
     Phase 3: Assembly (quiet clients, sort)
     """
-    # --- Phase 1: Airtable ---
-    print("Phase 1: Fetching Airtable data...", file=sys.stderr)
-    video_stats, current_client_names, onboarding_names, inactive_client_names = get_client_video_stats()
-    team_slack_ids = get_team_slack_ids()
-    delivery_days = get_days_since_delivery()
-    print(f"  {len(video_stats)} clients with active videos, {len(team_slack_ids)} team members", file=sys.stderr)
+    # --- Phase 1+2: Fetch Airtable data and Slack channel list in parallel ---
+    print("Phase 1: Fetching data in parallel...", file=sys.stderr)
 
-    # --- Phase 2: Slack scanning ---
-    print("Phase 2: Scanning Slack channels...", file=sys.stderr)
-    channels = list_slack_channels(filter_pattern="-client")
-    channels = [ch for ch in channels if not ch.get("is_archived", False)]
-    print(f"  Found {len(channels)} client channels", file=sys.stderr)
+    def _list_client_channels():
+        chs = list_slack_channels(filter_pattern="-client")
+        return [ch for ch in chs if not ch.get("is_archived", False)]
+
+    phase1_tasks = {
+        "video_stats": get_client_video_stats,
+        "team_slack_ids": get_team_slack_ids,
+        "delivery_days": get_days_since_delivery,
+        "channels": _list_client_channels,
+    }
+
+    fetched = {}
+    with ThreadPoolExecutor(max_workers=len(phase1_tasks)) as executor:
+        futures = {executor.submit(fn): key for key, fn in phase1_tasks.items()}
+        for future in as_completed(futures):
+            key = futures[future]
+            fetched[key] = future.result()
+
+    video_stats, current_client_names, onboarding_names, inactive_client_names = fetched["video_stats"]
+    team_slack_ids = fetched["team_slack_ids"]
+    delivery_days = fetched["delivery_days"]
+    channels = fetched["channels"]
+
+    print(f"  {len(video_stats)} clients with active videos, {len(team_slack_ids)} team members, {len(channels)} channels", file=sys.stderr)
+
+    # --- Phase 2: Slack message fetch (parallel) ---
+    print("Phase 2: Fetching Slack messages in parallel...", file=sys.stderr)
+
+    def _fetch_channel(ch):
+        try:
+            return ch["id"], read_slack_channel(ch["id"], limit=200, since_hours=hours, include_threads=True, max_threads=30)
+        except Exception:
+            return ch["id"], []
+
+    channel_messages = {}
+    with ThreadPoolExecutor(max_workers=10) as executor:
+        futures = {executor.submit(_fetch_channel, ch): ch for ch in channels}
+        for future in as_completed(futures):
+            ch_id, msgs = future.result()
+            channel_messages[ch_id] = msgs
+    print(f"  Done", file=sys.stderr)
 
     reports = []
     scanned_clients = set()
@@ -652,11 +720,7 @@ def generate_client_report(hours=72, target_client=None):
 
         scanned_clients.add(display_name)
 
-        # Read messages with threads — client feedback often happens in thread replies
-        try:
-            messages = read_slack_channel(channel_id, limit=200, since_hours=hours, include_threads=True, max_threads=30)
-        except Exception:
-            messages = []
+        messages = channel_messages.get(channel_id, [])
 
         if not messages:
             vs = video_stats.get(display_name, {})
@@ -740,8 +804,22 @@ def generate_client_report(hours=72, target_client=None):
         # Churn signals auto-bump to High regardless of other factors
         if churn_signals:
             risk_level = "High"
+        elif len(risk_factors) >= 2:
+            risk_level = "High"
+        elif risk_factors:
+            risk_level = "Medium"
         else:
-            risk_level = "High" if len(risk_factors) >= 2 else ("Medium" if risk_factors else "Low")
+            # Escalate from Low → Medium based on ball-in-court signals
+            ball_is_reply = last_contact and last_contact["direction"] == "ours"
+            reply_hours = last_contact["hours_ago"] if ball_is_reply else 0
+            if ball_is_reply and overall_mood == "Seeking Updates":
+                risk_level = "Medium"
+                risk_factors.append(f"Seeking updates, reply owed ({int(reply_hours)}h)")
+            elif ball_is_reply and reply_hours > 6:
+                risk_level = "Medium"
+                risk_factors.append(f"Reply owed for {int(reply_hours)}h")
+            else:
+                risk_level = "Low"
 
         vs = video_stats.get(display_name, {})
 
@@ -756,6 +834,7 @@ def generate_client_report(hours=72, target_client=None):
             if m.get("user_id", "") not in team_slack_ids
             and m.get("user", "").lower() != "airtable"
             and m.get("username", "") != "airtable2"
+            and not _is_system_message(m)
             and len(m.get("text", "")) > 10
         ]
         client_msgs.sort(key=lambda m: float(m.get("timestamp", 0)), reverse=True)

@@ -15,8 +15,10 @@ ALL_ACTIVE_STATUSES = [
     "59 - Editing Revisions",
     "60 - Submitted for QC",
     "60 - Internal Review",             # dual variant — same meaning
+    "70 - Approved By Agency",
     "75 - Sent to Client For Review",
     "80 - Approved By Client",
+    "90 - Approved But On Hold",
 ]
 
 # Status 60 has two Airtable variants; both mean "PM needs to review"
@@ -38,8 +40,10 @@ STATUS_ORDER = {
     "59 - Editing Revisions": 59,
     "60 - Submitted for QC": 60,
     "60 - Internal Review": 60,
+    "70 - Approved By Agency": 70,
     "75 - Sent to Client For Review": 75,
     "80 - Approved By Client": 80,
+    "90 - Approved But On Hold": 90,
     "100 - Scheduled - DONE": 100,
 }
 
@@ -50,8 +54,10 @@ STATUS_SHORT = {
     "50": "editing",
     "59": "revision",
     "60": "QC",
+    "70": "agency ok",
     "75": "client rev",
     "80": "approved",
+    "90": "on hold",
     "100": "done",
 }
 
@@ -87,9 +93,9 @@ STALE_APPROVAL_DAYS = 5        # Video at status 80 for 5+ days = alert
 # PM / ops manager identities
 # ---------------------------------------------------------------------------
 SIMON_SLACK_USER_ID = "U09SVR0R2GH"  # Simon (PM/ops manager)
+SAMU_SLACK_USER_ID = "U070CUSP75M"   # Samu (ops manager / task giver)
 OPS_MANAGER_IDS = {
     "U09SVR0R2GH",  # Simon
-    "U0AJ134LBL4",  # Jonathan James (ops manager)
 }
 
 # ---------------------------------------------------------------------------
@@ -100,6 +106,7 @@ OPS_MANAGER_IDS = {
 # so deadline is still relevant until client approves.
 POST_DEADLINE_STATUSES = [
     "80 - Approved By Client",
+    "90 - Approved But On Hold",
     "100 - Scheduled - DONE",
 ]
 
@@ -125,11 +132,39 @@ RAM_CHANNEL_ID = "C070JMABW07"
 # Maximum expected days at each status before flagging as stale.
 # Based on SOP: deadline = V1 delivery 3 days from assignment.
 STATUS_STALE_DAYS = {
-    "41 - Sent to Editor": 2,         # Editor should confirm within 2 days
-    "50 - Editor Confirmed": 4,        # Should start editing within 4 days
-    "59 - Editing Revisions": 5,       # Revisions should be done within 5 days
-    "60 - Submitted for QC": 1,        # QC should be done within 1 day
-    "60 - Internal Review": 1,
-    "75 - Sent to Client For Review": 7,  # Client should respond within 7 days
-    "80 - Approved By Client": 3,      # Should be scheduled within 3 days
+    "60 - Submitted for QC": 2,        # Simon needs to review — he's the bottleneck
+    "60 - Internal Review": 2,
+    "80 - Approved By Client": 2,      # Needs scheduling — Simon's job
 }
+
+# ---------------------------------------------------------------------------
+# Valid status transitions (reflects actual practice, not theoretical SOP)
+# ---------------------------------------------------------------------------
+VALID_TRANSITIONS = {
+    "41 - Sent to Editor":            ["50 - Editor Confirmed"],
+    "50 - Editor Confirmed":          ["59 - Editing Revisions", "60 - Submitted for QC"],
+    "59 - Editing Revisions":         ["60 - Submitted for QC", "60 - Internal Review"],
+    "60 - Submitted for QC":          ["59 - Editing Revisions", "75 - Sent to Client For Review"],
+    "60 - Internal Review":           ["59 - Editing Revisions", "75 - Sent to Client For Review"],
+    "75 - Sent to Client For Review": ["59 - Editing Revisions", "80 - Approved By Client"],
+    "80 - Approved By Client":        ["100 - Scheduled - DONE", "90 - Approved But On Hold"],
+}
+
+# ---------------------------------------------------------------------------
+# Frame.io integration
+# ---------------------------------------------------------------------------
+FRAMEIO_LINK_FIELDS = ["Frame.io Link", "Frame Link", "Review Link"]
+
+# Crosscheck thresholds
+STALE_INPUT_DAYS = 14             # Flag "Waiting For Input" after this many days
+FRAMEIO_FOLLOWUP_DAYS = 5         # Flag status-75 videos with no Frame.io activity
+APPROVAL_KEYWORDS = [
+    "approved", "love it", "looks great", "good to go", "all good",
+    "go ahead", "perfect", "approve", "happy with it", "good to post",
+    "ready to post", "ready to go", "looks good", "looks amazing",
+]
+FOOTAGE_KEYWORDS = [
+    "recorded", "footage", "uploaded", "new video", "raw", "just sent",
+    "finished recording", "done recording", "sent the video",
+    "sent the recording", "here's the video", "here is the video",
+]
