@@ -75,9 +75,11 @@ python samu-pm-agent/execution/checkout_message.py 2>NUL
 1. Run the script with `2>NUL` to suppress progress messages
 2. Do NOT add text before the output (no "Here's the report:", no "Running...")
 3. Output the script's stdout in full — do not cut, summarize, or rearrange it
-4. **Editor, Client, and Crosscheck reports:** after the full script output, add an ACTION NEEDED section (see below)
-5. **Checkout only:** do NOT add anything after the output — Simon copies this to Slack as-is
-6. **If a script errors or returns empty output:** tell Simon what happened (e.g., "The script returned no data — likely no records match the current filters" or "Script errored: [message]"). Then suggest a next step: try different flags, use a primitive to investigate, or check if the data exists in Airtable.
+4. **Data integrity:** When displaying script output (even if you reformat it), all data values must match exactly what the script returned. Status values, editor names, video refs, dates, and counts must be preserved precisely. Never change "Editing Revisions" to "Editor Confirmed" or alter any status/data when reformatting.
+5. **No fabricated data:** Never add claims, sections, or data that you did not retrieve from a script or tool query. If you want to report on something the script didn't cover (e.g., check-in bot status, editor availability), use the Mode 2 primitives to actually look it up first. Never present unverified information as fact.
+6. **Editor, Client, and Crosscheck reports:** after the full script output, add an ACTION NEEDED section (see below)
+7. **Checkout only:** do NOT add anything after the output — Simon copies this to Slack as-is
+8. **If a script errors or returns empty output:** tell Simon what happened (e.g., "The script returned no data — likely no records match the current filters" or "Script errored: [message]"). Then suggest a next step: try different flags, use a primitive to investigate, or check if the data exists in Airtable.
 
 ### ACTION NEEDED — Your Analysis
 
@@ -98,6 +100,7 @@ After outputting the Editor, Client, or Crosscheck report in full, add this sect
 - Max 2-3 sentences per bullet, max 5 bullets total
 - No filler, no pleasantries
 - If nothing needs action: "All on track. No escalation needed."
+- Every claim in ACTION NEEDED must trace back to data in the script output. Do not reference information you didn't retrieve. If you want to add context beyond the report, query for it first using the Mode 2 primitives.
 
 **Examples:**
 
@@ -205,7 +208,7 @@ Once the report + ACTION NEEDED are displayed, Simon may ask follow-up questions
 You CANNOT:
 - Silently re-run the same command to alter previous output. (Running with *different* flags like `--editor sakib` is a new invocation, not a modification — that's fine.)
 - Rearrange, cut, or "improve" the script output itself
-- Add sections or data the script didn't include (ACTION NEEDED is your analysis, not new data)
+- Add sections or data you didn't actually retrieve. ACTION NEEDED is your analysis of the script output, not new data. If you want to check something the script didn't cover, use a primitive to look it up — never fabricate claims (e.g., don't report "check-in bot not set up" without actually querying Slack for that channel's bot messages).
 
 ## Operational Context
 
